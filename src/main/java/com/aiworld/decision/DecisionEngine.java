@@ -2,6 +2,8 @@ package com.aiworld.decision;
 
 import com.aiworld.action.*;
 import com.aiworld.core.World;
+import com.aiworld.llm.Strategy;
+import com.aiworld.llm.StrategyManager;
 import com.aiworld.model.Location;
 import com.aiworld.model.Resource;
 import com.aiworld.npc.AbstractNPC;
@@ -51,12 +53,31 @@ public class DecisionEngine {
             return;
         }
 
-        // Select the action with the highest estimated utility
+        // Select the action with the highest strategy-weighted utility
         Action chosen = executable.stream()
-            .max(Comparator.comparingDouble(a -> a.estimatedUtility(npc, world)))
+            .max(Comparator.comparingDouble(a -> scoreAction(a, npc, world)))
             .orElseThrow();
 
+        System.out.printf("[%s] Rule engine → %s%n", npc.getId(), chosen.getName());
         chosen.execute(npc, world);
+    }
+
+    /**
+     * Scores an action using its base utility multiplied by the current
+     * strategy's action multiplier (if a strategy is active).
+     *
+     * Example: base utility 0.4 for Gather + GATHER_FOOD strategy (×2.5) = 1.0.
+     * This causes the rule engine to prefer Gather without bypassing any
+     * canExecute() safety checks.
+     */
+    private double scoreAction(Action action, AbstractNPC npc, World world) {
+        double utility = action.estimatedUtility(npc, world);
+        StrategyManager sm = npc.getStrategyManager();
+        if (sm != null) {
+            Strategy strategy = sm.getCurrentStrategy();
+            utility *= strategy.getActionMultiplier(action.getName());
+        }
+        return utility;
     }
 
     /**

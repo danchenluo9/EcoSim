@@ -48,6 +48,6 @@ public class MoveAction implements Action {
 
     @Override
     public double estimatedUtility(AbstractNPC npc, World world) {
-        return npc.getGoalSystem().getUrgency("Explore");
+        return npc.getGoalSystem().getUrgency("Explore", npc.getState());
     }
 }

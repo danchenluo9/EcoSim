@@ -2,6 +2,7 @@ package com.aiworld;
 
 import com.aiworld.core.World;
 import com.aiworld.core.WorldLoop;
+import com.aiworld.llm.ClaudeClient;
 import com.aiworld.model.Location;
 import com.aiworld.model.Resource;
 import com.aiworld.npc.NPC;
@@ -44,11 +45,19 @@ public class Simulator {
             new Location(10, 10), 30,  50, 1));
 
         // ── 3. Spawn NPCs ────────────────────────────────────────────
-        world.addNPC(new NPC("Alice", new Location(2,  2)));
-        world.addNPC(new NPC("Bob",   new Location(14, 4)));
-        world.addNPC(new NPC("Carol", new Location(9,  14)));
-        world.addNPC(new NPC("Dave",  new Location(5,  10)));
-        world.addNPC(new NPC("Eve",   new Location(18, 18)));
+        ClaudeClient claude = ClaudeClient.fromEnv();
+
+        NPC alice = new NPC("Alice", new Location(2,  2));  alice.setLLMClient(claude);
+        NPC bob   = new NPC("Bob",   new Location(14, 4));  bob.setLLMClient(claude);
+        NPC carol = new NPC("Carol", new Location(9,  14)); carol.setLLMClient(claude);
+        NPC dave  = new NPC("Dave",  new Location(5,  10)); dave.setLLMClient(claude);
+        NPC eve   = new NPC("Eve",   new Location(18, 18)); eve.setLLMClient(claude);
+
+        world.addNPC(alice);
+        world.addNPC(bob);
+        world.addNPC(carol);
+        world.addNPC(dave);
+        world.addNPC(eve);
 
         // ── 4. Start the simulation loop ─────────────────────────────
         WorldLoop loop = new WorldLoop(world, TICK_INTERVAL_MS, MAX_TICKS);

@@ -48,10 +48,10 @@ public class GoalSystem {
      * Returns the urgency score of a goal by name.
      * Used by actions to estimate their own utility.
      */
-    public double getUrgency(String goalName) {
+    public double getUrgency(String goalName, NPCState state) {
         return goals.stream()
             .filter(g -> g.getName().equals(goalName))
-            .mapToDouble(Goal::getWeight)
+            .mapToDouble(g -> g.computeUrgency(state))
             .findFirst()
             .orElse(0.0);
     }

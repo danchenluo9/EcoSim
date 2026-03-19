@@ -4,6 +4,7 @@ import com.aiworld.core.World;
 import com.aiworld.model.Resource;
 import com.aiworld.npc.AbstractNPC;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -38,6 +39,17 @@ public class GatherAction implements Action {
             System.out.printf("[%s] gathered %d food at %s (resource left: %d)%n",
                 npc.getId(), gathered,
                 npc.getState().getLocation(), resource.getQuantity());
+
+            // Resource contention: if the node ran short, nearby NPCs are competitors
+            if (gathered < GATHER_AMOUNT) {
+                List<AbstractNPC> competitors = world.getNPCsNear(
+                    npc.getState().getLocation(), 0);
+                competitors.remove(npc);
+                for (AbstractNPC rival : competitors) {
+                    npc.getMemory().recordNegativeInteraction(rival.getId(), 0.05);
+                    rival.getMemory().recordNegativeInteraction(npc.getId(), 0.05);
+                }
+            }
         });
     }
 
