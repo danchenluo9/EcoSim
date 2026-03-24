@@ -19,7 +19,6 @@ import java.util.List;
 public class InteractAction implements Action {
 
     private static final int INTERACTION_RADIUS = 2;
-    private AbstractNPC targetNpc;  // resolved in canExecute
 
     @Override
     public String getName() { return "Interact"; }
@@ -29,14 +28,17 @@ public class InteractAction implements Action {
         List<AbstractNPC> nearby = world.getNPCsNear(
             npc.getState().getLocation(), INTERACTION_RADIUS);
         nearby.remove(npc);
-        if (nearby.isEmpty()) return false;
-        targetNpc = nearby.get(0);
-        return true;
+        return !nearby.isEmpty();
     }
 
     @Override
     public void execute(AbstractNPC npc, World world) {
-        if (targetNpc == null) return;
+        List<AbstractNPC> nearby = world.getNPCsNear(
+            npc.getState().getLocation(), INTERACTION_RADIUS);
+        nearby.remove(npc);
+        if (nearby.isEmpty()) return;
+
+        AbstractNPC targetNpc = nearby.get(0);
 
         double targetTrust = npc.getMemory()
             .getImpression(targetNpc.getId())
@@ -94,12 +96,20 @@ public class InteractAction implements Action {
         actor.getMemory().recordNegativeInteraction(target.getId(), 0.2);
         target.getMemory().recordNegativeInteraction(actor.getId(), 0.3);
 
+        // Actor records what they did; target records what was done to them
         actor.getMemory().addEvent(new MemoryEvent(
             world.getCurrentTick(),
-            MemoryEvent.EventType.WAS_ATTACKED,
-            "Stole from " + target.getId(),
+            MemoryEvent.EventType.STOLE_FOOD,
+            "Stole food from " + target.getId(),
             actor.getState().getLocation(),
-            -0.4
+            -0.2
+        ));
+        target.getMemory().addEvent(new MemoryEvent(
+            world.getCurrentTick(),
+            MemoryEvent.EventType.WAS_ATTACKED,
+            "Was robbed by " + actor.getId(),
+            target.getState().getLocation(),
+            -0.6
         ));
 
         System.out.printf("[%s] competed with [%s], stole %d food%n",
@@ -108,6 +118,6 @@ public class InteractAction implements Action {
 
     @Override
     public double estimatedUtility(AbstractNPC npc, World world) {
-        return npc.getGoalSystem().getUrgency("Social");
+        return npc.getGoalSystem().getUrgency("Social", npc.getState());
     }
 }

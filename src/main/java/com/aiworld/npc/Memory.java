@@ -1,5 +1,6 @@
 package com.aiworld.npc;
 
+import com.aiworld.dialog.DialogSession;
 import com.aiworld.model.MemoryEvent;
 import com.aiworld.model.NPCImpression;
 
@@ -25,6 +26,9 @@ public class Memory {
 
     /** Social model: NPC id → subjective impression. */
     private final Map<String, NPCImpression> impressions = new HashMap<>();
+
+    /** Conversation log: chronological record of dialog sessions. */
+    private final List<DialogSession> conversationLog = new ArrayList<>();
 
     // ── Event log ────────────────────────────────────────────────────
 
@@ -75,5 +79,17 @@ public class Memory {
         }
     }
 
-    public Map<String, NPCImpression> getAllImpressions() { return impressions; }
+    public Map<String, NPCImpression> getAllImpressions() { return Collections.unmodifiableMap(impressions); }
+
+    // ── Conversation log ──────────────────────────────────────────────
+
+    public void addConversation(DialogSession session) {
+        conversationLog.add(session);
+    }
+
+    /** Returns the most recent {@code n} conversations. */
+    public List<DialogSession> getRecentConversations(int n) {
+        int start = Math.max(0, conversationLog.size() - n);
+        return conversationLog.subList(start, conversationLog.size());
+    }
 }

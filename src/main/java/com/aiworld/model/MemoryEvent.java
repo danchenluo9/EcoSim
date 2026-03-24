@@ -9,7 +9,7 @@ public class MemoryEvent {
 
     public enum EventType {
         SAW_RESOURCE, MET_NPC, WAS_ATTACKED, SHARED_FOOD,
-        FOUND_SHELTER, OBSERVED_DEATH, FORMED_ALLIANCE
+        STOLE_FOOD, HAD_CONVERSATION, FOUND_SHELTER, OBSERVED_DEATH, FORMED_ALLIANCE
     }
 
     private final long      tick;        // world tick when this happened

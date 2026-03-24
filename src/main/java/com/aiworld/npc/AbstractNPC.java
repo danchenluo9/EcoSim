@@ -2,6 +2,9 @@ package com.aiworld.npc;
 
 import com.aiworld.core.World;
 import com.aiworld.decision.DecisionEngine;
+import com.aiworld.action.DialogAction;
+import com.aiworld.llm.LLMClient;
+import com.aiworld.llm.StrategyManager;
 
 /**
  * AbstractNPC is the base class for all NPC agents in the simulation.
@@ -12,6 +15,11 @@ import com.aiworld.decision.DecisionEngine;
  *
  * The three core systems — state, goals, memory — are wired together here,
  * with the decision engine orchestrating them each tick.
+ *
+ * An optional LLM strategic layer can be attached via {@link #setLLMClient}.
+ * When present, {@link StrategyManager} runs before the DecisionEngine each
+ * tick and updates the NPC's high-level {@link com.aiworld.llm.Strategy},
+ * which biases — but does NOT replace — the rule-based action selection.
  */
 public abstract class AbstractNPC {
 
@@ -20,6 +28,14 @@ public abstract class AbstractNPC {
     protected final GoalSystem     goalSystem;
     protected final Memory         memory;
     protected final DecisionEngine decisionEngine;
+
+    /** Raw LLM client — stored so DialogAction can access it directly. */
+    private LLMClient llmClient;
+
+    private final DialogAction dialogAction = new DialogAction();
+
+    /** Optional LLM strategic layer. Null until {@link #setLLMClient} is called. */
+    private StrategyManager strategyManager;
 
     protected AbstractNPC(String id, NPCState state,
                           GoalSystem goalSystem, Memory memory) {
@@ -36,20 +52,42 @@ public abstract class AbstractNPC {
      * Sequence:
      *  1. Passive state effects (metabolism, aging)
      *  2. Goal weight updates
-     *  3. Pre-update hook (subclass logic)
-     *  4. Decision engine selects and executes action
-     *  5. Memory maintenance (impression decay)
-     *  6. Post-update hook
+     *  3. LLM strategic planning (if LLM client is set — skipped otherwise)
+     *  4. Pre-update hook (subclass perception/communication)
+     *  5. Decision engine selects and executes action (always runs)
+     *  6. Dialog (secondary action — only if LLM client is set and conditions allow)
+     *  7. Memory maintenance (impression decay)
+     *  8. Post-update hook
      */
     public final void update(World world) {
         if (state.isDead()) return;
 
         state.passiveTick();                                  // 1. metabolism
-        goalSystem.updateAll(state, world.getCurrentTick());  // 2. goal update
-        onPreUpdate(world);                                   // 3. hook
-        decisionEngine.decide(this, world);                   // 4. act
-        memory.decayImpressions();                            // 5. social drift
-        onPostUpdate(world);                                  // 6. hook
+        goalSystem.updateAll(state, world.getCurrentTick());  // 2. goal updates
+        if (strategyManager != null) {
+            strategyManager.tick(this, world);                // 3. LLM strategy layer
+        }
+        onPreUpdate(world);                                   // 4. perception hook
+        decisionEngine.decide(this, world);                   // 5. act
+        if (llmClient != null) {
+            dialogAction.tryExecute(this, world);             // 6. secondary dialog
+        }
+        memory.decayImpressions();                            // 7. social drift
+        onPostUpdate(world);                                  // 8. logging hook
+    }
+
+    /**
+     * Attaches an LLM client to this NPC, enabling strategic planning.
+     * Can be called at any time (including mid-simulation).
+     *
+     * <pre>
+     *   npc.setLLMClient(new MockLLMClient());          // for testing
+     *   npc.setLLMClient(ClaudeClient.fromEnv());       // live API
+     * </pre>
+     */
+    public void setLLMClient(LLMClient client) {
+        this.llmClient       = client;
+        this.strategyManager = new StrategyManager(client);
     }
 
     /**
@@ -70,10 +108,12 @@ public abstract class AbstractNPC {
 
     // ── Accessors ────────────────────────────────────────────────────
 
-    public String      getId()         { return id; }
-    public NPCState    getState()      { return state; }
-    public GoalSystem  getGoalSystem() { return goalSystem; }
-    public Memory      getMemory()     { return memory; }
+    public String          getId()              { return id; }
+    public NPCState        getState()           { return state; }
+    public GoalSystem      getGoalSystem()      { return goalSystem; }
+    public Memory          getMemory()          { return memory; }
+    public LLMClient       getLLMClient()       { return llmClient; }
+    public StrategyManager getStrategyManager() { return strategyManager; }
 
     @Override
     public String toString() {
