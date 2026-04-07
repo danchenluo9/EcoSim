@@ -29,7 +29,11 @@ public class WorldLoop implements Runnable {
     private final long                  maxTicks;        // 0 = infinite
 
     private ScheduledExecutorService    executor;
-    private ScheduledFuture<?>          future;
+    // [WL-1] volatile: written in start() AFTER scheduleAtFixedRate() returns, but read
+    // unsynchronized in run() (max-ticks cancel path). With initialDelay=0 the scheduler
+    // thread can execute run() before start() completes the assignment. Without volatile,
+    // the JMM does not guarantee visibility — run() may see null and skip the cancel call.
+    private volatile ScheduledFuture<?> future;
     private volatile boolean            running = false;
     private volatile boolean            paused  = false;
 
@@ -78,6 +82,12 @@ public class WorldLoop implements Runnable {
         // avoids thread leaks when multiple simulation runs share a JVM (e.g., tests).
         shutdownNpcExecutors(world.getNpcs());
         shutdownNpcExecutors(world.getDeadNpcs());
+        // [Issue 2] Shut down the shared dialog thread pool. Previously this was only
+        // called from the maxTicks path inside run(), so external stop() calls left a
+        // CachedThreadPool alive, leaking threads on repeated simulation runs in the
+        // same JVM. Shutdown order matches the maxTicks path: NPC executors first, then
+        // the dialog pool (consistent ordering prevents potential ordering-related leaks).
+        DialogTask.shutdownExecutor();
         log.info("WorldLoop stopped at tick {}", world.getCurrentTick());
     }
 

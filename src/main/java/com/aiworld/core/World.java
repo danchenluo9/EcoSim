@@ -26,7 +26,8 @@ public class World {
 
     private static final Logger log = LoggerFactory.getLogger(World.class);
 
-    private static final int MAX_DEAD_DISPLAY = 20; // cap on dead NPCs retained for the frontend
+    private static final int MAX_DEAD_DISPLAY          = 20; // cap on dead NPCs retained for the frontend
+    private static final int MAX_DIALOG_TASKS_PER_TICK = 4;  // max concurrent LLM dialog calls per tick
 
     private final int width;
     private final int height;
@@ -86,10 +87,14 @@ public class World {
             // Update all NPCs first so dialog prompts capture the full post-update world state.
             // (AbstractNPC.update() Javadoc: "prepareDialogTask is called after all NPC updates")
             updateOrder.forEach(npc -> npc.update(this));
-            updateOrder.forEach(npc -> {
+            // Cap dialog tasks per tick so allOf().join() can't block for N×20s when
+            // many NPCs qualify simultaneously. updateOrder is already shuffled, so the
+            // cap is applied fairly — no NPC has a persistent first-mover advantage.
+            for (AbstractNPC npc : updateOrder) {
+                if (dialogTasks.size() >= MAX_DIALOG_TASKS_PER_TICK) break;
                 DialogTask task = npc.prepareDialogTask(this);
                 if (task != null) dialogTasks.add(task);
-            });
+            }
 
             // Separate newly-dead NPCs so spatial queries stay O(live)
             List<AbstractNPC> newlyDead = new ArrayList<>();

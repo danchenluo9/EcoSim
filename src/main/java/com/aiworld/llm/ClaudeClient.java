@@ -8,7 +8,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * LLM client that calls the Anthropic Claude API.
@@ -33,16 +32,21 @@ public class ClaudeClient implements LLMClient {
     private static final int    MAX_TOKENS               = 250;
     private static final int    MAX_CONSECUTIVE_FAILURES = 3;
     private static final long   CIRCUIT_BREAKER_MS       = 60_000; // 60 seconds
+    private static final String SYSTEM_PROMPT            = "Respond with raw JSON only. No markdown, no prose, no explanation.";
 
     private final String     apiKey;
     private final String     model;
     private final HttpClient http;
 
-    // Both fields are accessed by two threads: the per-NPC LLM worker (call) and
-    // the world-loop thread (callRaw via DialogAction). AtomicInteger / volatile
-    // prevent torn reads and lost increments without needing a synchronized block.
-    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
-    private volatile long       circuitOpenUntilMs  = 0;
+    // [LLM-1] consecutiveFailures is a plain int guarded by synchronized recordFailure/recordSuccess.
+    // The previous AtomicInteger + non-atomic compound (increment → check → write circuitOpenUntilMs
+    // → compareAndSet) allowed two concurrent callers (per-NPC LLM executor + dialog-worker) to both
+    // observe count >= threshold, both open the circuit, but only one reset the counter — leaving the
+    // other at a stale value that triggered spurious circuit opens on every subsequent failure.
+    // circuitOpenUntilMs remains volatile so isCircuitOpen() can read it without holding the lock
+    // (fast-path check that never writes).
+    private int          consecutiveFailures = 0;
+    private volatile long circuitOpenUntilMs  = 0;
 
     public ClaudeClient(String apiKey) {
         this(apiKey, DEFAULT_MODEL);
@@ -164,17 +168,23 @@ public class ClaudeClient implements LLMClient {
         return false;
     }
 
-    private void recordFailure() {
-        if (consecutiveFailures.incrementAndGet() >= MAX_CONSECUTIVE_FAILURES) {
+    // [LLM-1] Both methods synchronized on `this` to make the check-and-act atomic.
+    // Without synchronization, two concurrent callers (per-NPC strategy executor +
+    // dialog-worker) could both observe count >= threshold and both open the circuit,
+    // but only one compareAndSet would succeed — leaving the counter at a stale value
+    // and causing every subsequent failure to redundantly reopen the circuit.
+    private synchronized void recordFailure() {
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
             circuitOpenUntilMs = System.currentTimeMillis() + CIRCUIT_BREAKER_MS;
             log.warn("{} consecutive failures — circuit open for {}s",
-                consecutiveFailures.get(), CIRCUIT_BREAKER_MS / 1000);
-            consecutiveFailures.set(0);
+                consecutiveFailures, CIRCUIT_BREAKER_MS / 1000);
+            consecutiveFailures = 0;
         }
     }
 
-    private void recordSuccess() {
-        consecutiveFailures.set(0);
+    private synchronized void recordSuccess() {
+        consecutiveFailures = 0;
     }
 
     // ── Private helpers ───────────────────────────────────────────────
@@ -211,6 +221,7 @@ public class ClaudeClient implements LLMClient {
         return "{"
             + "\"model\":\"" + model + "\","
             + "\"max_tokens\":" + MAX_TOKENS + ","
+            + "\"system\":\"" + SYSTEM_PROMPT + "\","
             + "\"messages\":[{\"role\":\"user\",\"content\":\"" + escaped + "\"}]"
             + "}";
     }

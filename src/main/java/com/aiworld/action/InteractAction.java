@@ -32,6 +32,12 @@ public class InteractAction implements Action {
     private static final double MIN_FOOD_RATIO_SHARE = 0.4;   // ensures max share (10 food) still leaves actor
                                                                // above the critical survival threshold (25%)
 
+    // [Issue 7] Cache the best target found during canExecute() so execute() doesn't
+    // repeat the same O(n) trust-map scan. Follows the same pattern as GatherAction's
+    // cachedResource. Safe: InteractAction is instantiated fresh each tick by
+    // DecisionEngine, so the field is only ever touched on the world-loop thread.
+    private AbstractNPC cachedTarget;
+
     @Override
     public String getName() { return "Interact"; }
 
@@ -43,13 +49,20 @@ public class InteractAction implements Action {
         // would contradict the SurvivalGoal and hasten their own death.
         if (npc.getState().getFoodRatio() < MIN_FOOD_RATIO_SHARE)
             return false;
-        return bestInteractionTarget(npc, world).isPresent();
+        // [Issue 7] Cache the result so execute() can reuse it without a second scan.
+        Optional<AbstractNPC> best = bestInteractionTarget(npc, world);
+        cachedTarget = best.orElse(null);
+        return best.isPresent();
     }
 
     @Override
     public void execute(AbstractNPC npc, World world) {
-        bestInteractionTarget(npc, world)
-            .ifPresent(target -> performCooperativeInteraction(npc, target, world));
+        // [Issue 7] Use the target cached during canExecute(); avoids a redundant
+        // O(n) trust-map scan. cachedTarget is non-null here because execute() is
+        // only reached after canExecute() returned true.
+        if (cachedTarget != null) {
+            performCooperativeInteraction(npc, cachedTarget, world);
+        }
     }
 
     /**
@@ -59,6 +72,7 @@ public class InteractAction implements Action {
      */
     private Optional<AbstractNPC> bestInteractionTarget(AbstractNPC npc, World world) {
         return world.getNPCsNear(npc, INTERACTION_RADIUS).stream()
+            .filter(other -> !other.getId().equals(npc.getId()))
             .filter(other -> trustOf(npc, other) >= 0.5)
             .max(Comparator.comparingDouble(other -> trustOf(npc, other)));
     }

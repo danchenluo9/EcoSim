@@ -6,12 +6,14 @@ import com.aiworld.npc.AbstractNPC;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Comparator;
 import java.util.Random;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 
 /**
  * Manages LLM-driven strategic planning for a single NPC.
@@ -118,6 +120,12 @@ public class StrategyManager {
             pendingCall          = null;
             pendingCallIsEmergency = false;
             lastCallTick         = now;
+            // [Issue 1] Reset the regular cooldown every time a call completes, regardless
+            // of whether it was a routine or emergency call. Without this, a long-running
+            // emergency call that spans the point where ticksUntilNextCall hits 0 will make
+            // cooldownExpired=true on the very next tick, firing a redundant routine call
+            // immediately after the fresh emergency strategy was just applied.
+            ticksUntilNextCall = BASE_COOLDOWN + random.nextInt(COOLDOWN_JITTER);
         }
 
         // ── 3. Always advance countdown ───────────────────────────────
@@ -128,7 +136,13 @@ public class StrategyManager {
         ticksUntilNextCall--;
 
         // ── 4. Handle in-flight calls ─────────────────────────────────
-        boolean cooldownExpired  = ticksUntilNextCall <= 0;
+        // [Issue 3] If the NPC is stuck in RETALIATE but the aggressor has already died,
+        // treat the cooldown as expired immediately so the strategy is re-evaluated and the
+        // suppression of Gather/Rest/Move:FOOD is lifted without waiting up to 60 ticks.
+        boolean retaliationStale = currentStrategy.getType() == Strategy.Type.RETALIATE
+            && pendingCall == null
+            && !isMostRecentConflictSourceAlive(npc, world);
+        boolean cooldownExpired  = ticksUntilNextCall <= 0 || retaliationStale;
         boolean starvationRisk   = npc.getState().getFoodRatio() < FOOD_DANGER
                                    && (now - lastStarvationCallTick) >= EMERGENCY_LOCKOUT;
         boolean conflictDetected = hasConflictEventSinceLastCall(npc)
@@ -232,5 +246,27 @@ public class StrategyManager {
         if (starvation) return "starvation risk";
         if (conflict)   return "conflict detected";
         return "cooldown expired";
+    }
+
+    /**
+     * [Issue 3] Returns true if the NPC's most recent attacker or robber is still alive
+     * in the world. Used to detect a stale RETALIATE strategy so it can be shed early
+     * instead of self-penalising the NPC for up to 60 ticks with no valid target to strike.
+     */
+    private boolean isMostRecentConflictSourceAlive(AbstractNPC npc, World world) {
+        MemoryEvent latest = Stream.concat(
+                npc.getMemory().getEventsOfType(MemoryEvent.EventType.WAS_ATTACKED).stream(),
+                npc.getMemory().getEventsOfType(MemoryEvent.EventType.WAS_ROBBED).stream())
+            .max(Comparator.comparingLong(MemoryEvent::getTick))
+            .orElse(null);
+        if (latest == null || latest.getTargetId() == null) return false;
+        String aggressorId = latest.getTargetId();
+        // [STR-1] Filter dead NPCs explicitly. world.getNpcs() returns the raw list which still
+        // contains intra-tick dead NPCs (they are removed by removeIf at the end of Phase 1).
+        // Without the isDead() guard, an aggressor killed earlier in the same tick's update loop
+        // is still counted as alive here, delaying stale-RETALIATE detection by one tick and
+        // leaving the NPC with distorted utility scores (Attack ×2.0) for an unreachable target.
+        return world.getNpcs().stream()
+            .anyMatch(n -> aggressorId.equals(n.getId()) && !n.getState().isDead());
     }
 }

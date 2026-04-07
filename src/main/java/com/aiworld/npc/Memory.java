@@ -55,8 +55,29 @@ public class Memory {
             if (evicted != null) {
                 ArrayDeque<MemoryEvent> bucket = eventIndex.get(evicted.getType());
                 if (bucket != null) {
+                    // [MEM-1] Invariant: every event in `events` has exactly one matching entry
+                    // at the head of its eventIndex bucket, in the same chronological order.
+                    // This holds because addEvent appends to BOTH structures atomically, and the
+                    // MET_NPC cap returns before either append (so dropped events appear in neither).
+                    // If this throws, a code path appended to one structure without the other.
+                    MemoryEvent bucketHead = bucket.peekFirst();
+                    if (bucketHead != evicted) {
+                        throw new IllegalStateException(
+                            "Memory eviction invariant violated: events deque head " + evicted
+                            + " does not match eventIndex bucket head " + bucketHead
+                            + " for type " + evicted.getType());
+                    }
                     bucket.pollFirst(); // O(1): evicted is always the oldest = first in bucket
                     if (bucket.isEmpty()) eventIndex.remove(evicted.getType()); // don't accumulate empty buckets
+                } else {
+                    // [MEM-3] bucket == null means the evicted event was present in `events` but
+                    // absent from `eventIndex` — the other half of the desync MEM-1 guards against.
+                    // addEvent() always appends to both structures or neither, so this branch is
+                    // unreachable with correct code. If it fires, a future code path broke the
+                    // invariant (e.g., appending to `events` without updating `eventIndex`).
+                    throw new IllegalStateException(
+                        "Memory eviction invariant violated: no eventIndex bucket for evicted event "
+                        + evicted + " of type " + evicted.getType());
                 }
             }
         }
@@ -65,15 +86,20 @@ public class Memory {
     }
 
     /**
-     * Returns all events of a given type — O(1) index lookup.
+     * Returns all events of a given type — O(1) index lookup, snapshot copy.
      *
-     * Returns an unmodifiable view (no copy) so callers can stream cheaply.
-     * All callers only read (stream/anyMatch/count); none mutate the returned collection.
+     * [MEM-2] Returns a defensive snapshot rather than a live view. The previous
+     * unmodifiableCollection(bucket) was safe only because all callers streamed it
+     * synchronously on the world-loop thread. A snapshot prevents silent corruption
+     * if a future caller holds the reference across a tick boundary or passes it to
+     * a background thread, where bucket mutations (addEvent/eviction) would cause
+     * ConcurrentModificationException or stale iteration. Buckets hold ≤50 entries;
+     * the copy cost is negligible compared to any LLM I/O this drives.
      */
     public Collection<MemoryEvent> getEventsOfType(MemoryEvent.EventType type) {
         ArrayDeque<MemoryEvent> bucket = eventIndex.get(type);
         if (bucket == null || bucket.isEmpty()) return Collections.emptyList();
-        return Collections.unmodifiableCollection(bucket);
+        return new ArrayList<>(bucket);
     }
 
     public Deque<MemoryEvent> getAllEvents() { return new ArrayDeque<>(events); }

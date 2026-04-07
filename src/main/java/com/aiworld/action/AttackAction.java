@@ -105,7 +105,7 @@ public class AttackAction implements Action {
             if (looted > 0) {
                 target.getState().depleteFood(looted);
                 npc.getState().addFood(looted);
-                log.info("[{}] looted {} food from downed [{}]",
+                log.info("[{}] looted {} food from critically wounded [{}]",
                     npc.getId(), looted, target.getId());
             }
         }

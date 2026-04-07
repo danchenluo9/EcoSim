@@ -110,9 +110,24 @@ public class DialogTask {
 
     // ── Phase 2: HTTP call ────────────────────────────────────────────
 
-    /** Makes the LLM HTTP call. Must be called OUTSIDE the world lock. */
+    /**
+     * Makes the LLM HTTP call. Must be called OUTSIDE the world lock.
+     *
+     * [Fix 3.2] Any unchecked exception from the LLMClient is caught and treated
+     * as a null result rather than propagating through CompletableFuture.allOf().join()
+     * in World.tick(). Without this guard, one task throwing causes join() to throw a
+     * CompletionException, which skips Phase 3 (applyResult) for ALL dialog tasks that
+     * tick — including successful ones — and leaves every speaker's cooldown consumed
+     * for a conversation that never landed.
+     */
     public void executeCall() {
-        rawResult = client.callRaw(prompt);
+        try {
+            rawResult = client.callRaw(prompt);
+        } catch (Exception e) {
+            log.warn("[{}] Unexpected exception in callRaw — treating as null result: {}",
+                speaker.getId(), e.getMessage());
+            rawResult = null;
+        }
     }
 
     // ── Phase 3: apply results ────────────────────────────────────────
@@ -147,7 +162,11 @@ public class DialogTask {
 
         ParsedDialog parsed = parseDialogJson(rawResult);
         if (parsed == null) {
-            log.warn("[{}] Dialog JSON parse failed — skipping", speaker.getId());
+            // Revert speaker cooldown — HTTP call succeeded but LLM returned unparseable
+            // JSON, so no conversation happened. Mirrors the rawResult == null revert above.
+            speaker.markDialogCompleted(previousSpeakerDialogTick);
+            log.warn("[{}] Dialog JSON parse failed — speaker cooldown reverted to tick {}",
+                speaker.getId(), previousSpeakerDialogTick);
             return;
         }
 

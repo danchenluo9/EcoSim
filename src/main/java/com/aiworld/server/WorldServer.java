@@ -62,11 +62,18 @@ public class WorldServer {
     // ── Handlers ──────────────────────────────────────────────────────
 
     private void handleState(HttpExchange exchange) throws IOException {
+        // [Fix 1.1] CORS headers must be present on every response, including 405 and OPTIONS,
+        // so the browser can read error details and preflight requests succeed.
+        addCors(exchange);
+        if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+            return;
+        }
         if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
             send(exchange, 405, "Method Not Allowed");
             return;
         }
-        addCors(exchange);
         String json;
         synchronized (loop.getWorld()) {
             json = StateSerializer.serialize(loop.getWorld(), loop);
@@ -133,13 +140,9 @@ public class WorldServer {
             send(exchange, 405, "Method Not Allowed");
             return;
         }
-        if (loop.isRunning()) {
-            send(exchange, 400,
-                "{\"error\":\"Cannot change archetype while simulation is running\"}",
-                "application/json");
-            return;
-        }
 
+        // [Issue 4] Read and validate the body BEFORE acquiring the world lock so that
+        // I/O and input validation are never performed while holding the lock.
         String body = new String(
             exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).trim();
         String id        = extractJsonString(body, "id");
@@ -158,17 +161,33 @@ public class WorldServer {
             return;
         }
 
-        boolean found = false;
+        // [Issue 4] The isRunning() check and reconfigureGoals() are now performed
+        // atomically under the world lock. Previously, isRunning() was checked before
+        // the synchronized block — a concurrent loop.start() between the guard and the
+        // lock could allow archetype reconfiguration on a running simulation.
+        // I/O (send()) is intentionally kept outside the lock; flags capture the outcome.
+        boolean wasRunning = false;
+        boolean found      = false;
         synchronized (loop.getWorld()) {
-            for (AbstractNPC npc : loop.getWorld().getNpcs()) {
-                if (npc.getId().equals(id) && npc instanceof NPC) {
-                    ((NPC) npc).reconfigureGoals(archetype);
-                    found = true;
-                    break;
+            if (loop.isRunning()) {
+                wasRunning = true;
+            } else {
+                for (AbstractNPC npc : loop.getWorld().getNpcs()) {
+                    if (npc.getId().equals(id) && npc instanceof NPC) {
+                        ((NPC) npc).reconfigureGoals(archetype);
+                        found = true;
+                        break;
+                    }
                 }
             }
         }
 
+        if (wasRunning) {
+            send(exchange, 400,
+                "{\"error\":\"Cannot change archetype while simulation is running\"}",
+                "application/json");
+            return;
+        }
         if (!found) {
             send(exchange, 404,
                 "{\"error\":\"NPC not found: " + esc(id) + "\"}",

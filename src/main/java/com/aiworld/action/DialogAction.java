@@ -2,8 +2,6 @@ package com.aiworld.action;
 
 import com.aiworld.core.World;
 import com.aiworld.dialog.DialogPromptBuilder;
-import com.aiworld.llm.Strategy;
-import com.aiworld.llm.StrategyManager;
 import com.aiworld.npc.AbstractNPC;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,22 +22,18 @@ import java.util.List;
  *
  * Cooldown: global — an NPC won't start ANY new dialog within
  * {@value #DIALOG_COOLDOWN_TICKS} ticks of their last one, regardless of partner.
- * This is intentional: it prevents Diplomats (re-qualifying in ~3 ticks) from
- * flooding the LLM API by chaining conversations with every nearby NPC in rapid
- * succession. The global guard is tracked via {@link #lastDialogTick} in O(1)
+ * The global guard is tracked via {@link #lastDialogTick} in O(1)
  * rather than scanning memory events.
  *
- * Strategy suppression: strategies that suppress socialising
- * (AVOID_CONFLICT, SURVIVE, GATHER_FOOD, RETALIATE) block dialog entirely
- * via {@link #isDialogSuppressedBy(Strategy)}.
+ * Dialog is independent of strategy — any NPC with an LLM client can converse
+ * regardless of their current strategic state.
  */
 public class DialogAction {
 
     private static final Logger log = LoggerFactory.getLogger(DialogAction.class);
 
-    private static final int    DIALOG_RADIUS         = 2;
-    private static final int    DIALOG_COOLDOWN_TICKS = 15;
-    private static final double MIN_SOCIAL_URGENCY    = 0.1;   // blocks Fighter (max ~0.05)
+    private static final int DIALOG_RADIUS         = 2;
+    private static final int DIALOG_COOLDOWN_TICKS = 15;
 
     /** Tick of the most recent dialog this NPC initiated. -COOLDOWN means "never talked". */
     private long lastDialogTick = -DIALOG_COOLDOWN_TICKS;
@@ -55,14 +49,6 @@ public class DialogAction {
      */
     public DialogTask prepare(AbstractNPC npc, World world) {
         if (npc.getLLMClient() == null) return null;
-        if (npc.getGoalSystem().getUrgency("Social", npc.getState()) < MIN_SOCIAL_URGENCY)
-            return null;
-
-        // Respect strategy suppression — these strategies mean the NPC is too
-        // focused on survival or combat to engage in conversation.
-        StrategyManager sm = npc.getStrategyManager();
-        if (sm != null && isDialogSuppressedBy(sm.getCurrentStrategy()))
-            return null;
 
         // Global cooldown: O(1) field check instead of scanning memory events
         if (world.getCurrentTick() - lastDialogTick < DIALOG_COOLDOWN_TICKS) return null;
@@ -101,19 +87,4 @@ public class DialogAction {
         lastDialogTick = tick;
     }
 
-    /**
-     * Returns true for strategy types that suppress dialog entirely.
-     *
-     * This replaces the old numeric-threshold check
-     * ({@code getActionMultiplier("Dialog") < 0.35}) which was misleading because
-     * the Dialog multiplier is a binary gate here, not a continuous utility scaler
-     * used by the DecisionEngine. Explicitly enumerating suppressed strategies makes
-     * the intent unambiguous and decouples DialogAction from the multiplier API.
-     */
-    private static boolean isDialogSuppressedBy(Strategy strategy) {
-        return switch (strategy.getType()) {
-            case AVOID_CONFLICT, SURVIVE, GATHER_FOOD, RETALIATE -> true;
-            default -> false;
-        };
-    }
 }

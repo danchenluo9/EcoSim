@@ -1,6 +1,5 @@
 package com.aiworld;
 
-import com.aiworld.action.DialogTask;
 import com.aiworld.core.World;
 import com.aiworld.core.WorldLoop;
 import com.aiworld.llm.ClaudeClient;
@@ -87,8 +86,7 @@ public class Simulator {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutdown signal received — stopping server and executors.");
             server.stop();
-            loop.stop();              // shuts down world-loop scheduler + per-NPC LLM threads
-            DialogTask.shutdownExecutor();
+            loop.stop();              // shuts down world-loop scheduler + per-NPC LLM threads + dialog pool
         }, "shutdown-hook"));
 
         log.info("Ready — open http://localhost:5173 to configure and start the simulation.");
