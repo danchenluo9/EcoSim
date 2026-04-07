@@ -27,7 +27,12 @@ const STRATEGY_COLORS = {
 
 const VALENCE_COLOR = v => v > 0.2 ? '#4ade80' : v < -0.2 ? '#f87171' : '#94a3b8'
 
-function NPCCard({ npc, color, photo, displayName, expanded, onClick, onUpdateName, onUpdatePhoto }) {
+function NPCCard({ npc, color, photo, displayName, displayNames, expanded, onClick, onUpdateName, onUpdatePhoto }) {
+  const resolveName  = (id)   => displayNames?.[id] ?? id
+  const resolveNames = (text) => {
+    if (!text) return text
+    return Object.entries(displayNames ?? {}).reduce((str, [id, name]) => str.replaceAll(id, name), text)
+  }
   const [editing, setEditing] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const fileRef = useRef(null)
@@ -124,7 +129,7 @@ function NPCCard({ npc, color, photo, displayName, expanded, onClick, onUpdateNa
           {npc.strategyIntent && (
             <div className="section-block">
               <span className="section-title">Strategy Intent</span>
-              <p className="section-text">{npc.strategyIntent}</p>
+              <p className="section-text">{resolveNames(npc.strategyIntent)}</p>
             </div>
           )}
 
@@ -134,7 +139,7 @@ function NPCCard({ npc, color, photo, displayName, expanded, onClick, onUpdateNa
               <span className="section-title">Action History</span>
               <div className="action-log">
                 {[...npc.actionLog].reverse().map((entry, i) => (
-                  <div key={i} className="action-entry">{entry}</div>
+                  <div key={i} className="action-entry">{resolveNames(entry)}</div>
                 ))}
               </div>
             </div>
@@ -148,18 +153,18 @@ function NPCCard({ npc, color, photo, displayName, expanded, onClick, onUpdateNa
                 <div key={i} className="convo-block">
                   <div className="convo-header">
                     <span className="event-tick">t{c.tick}</span>
-                    <span className="convo-participants">{c.speakerId} → {c.listenerId}</span>
+                    <span className="convo-participants">{resolveName(c.speakerId)} → {resolveName(c.listenerId)}</span>
                     <span className="convo-valence" style={{ color: VALENCE_COLOR(c.valence) }}>
                       {c.valence > 0 ? '+' : ''}{c.valence}
                     </span>
                   </div>
                   <div className="convo-line">
-                    <span className="convo-who">{c.speakerId}:</span>
-                    <span className="convo-text">"{c.speakerLine}"</span>
+                    <span className="convo-who">{resolveName(c.speakerId)}:</span>
+                    <span className="convo-text">"{resolveNames(c.speakerLine)}"</span>
                   </div>
                   <div className="convo-line">
-                    <span className="convo-who">{c.listenerId}:</span>
-                    <span className="convo-text">"{c.listenerLine}"</span>
+                    <span className="convo-who">{resolveName(c.listenerId)}:</span>
+                    <span className="convo-text">"{resolveNames(c.listenerLine)}"</span>
                   </div>
                 </div>
               ))}
@@ -172,7 +177,7 @@ function NPCCard({ npc, color, photo, displayName, expanded, onClick, onUpdateNa
               <span className="section-title">Impressions</span>
               {npc.impressions.map(imp => (
                 <div key={imp.npcId} className="impression-row">
-                  <span>{imp.npcId}</span>
+                  <span>{resolveName(imp.npcId)}</span>
                   <span className="imp-trust">T {imp.trust}</span>
                   <span className="imp-hostility">H {imp.hostility}</span>
                 </div>
@@ -191,7 +196,7 @@ function NPCCard({ npc, color, photo, displayName, expanded, onClick, onUpdateNa
                 return (
                   <div key={i} className={`event-row ${cls}`}>
                     <span className="event-tick">t{e.tick}</span>
-                    <span className="event-desc">{e.description}</span>
+                    <span className="event-desc">{resolveNames(e.description)}</span>
                   </div>
                 )
               })}
@@ -224,6 +229,7 @@ export default function NPCPanel({ npcs, selected, onSelect, displayNames, photo
           color={colorOf(npc.id)}
           photo={photos[npc.id] ?? null}
           displayName={displayNames[npc.id] ?? npc.id}
+          displayNames={displayNames}
           expanded={selected?.id === npc.id}
           onClick={() => onSelect(selected?.id === npc.id ? null : npc.id)}
           onUpdateName={onUpdateName}

@@ -11,6 +11,7 @@ export default function App() {
   const [selectedNPC, setSelectedNPC] = useState(null)
   const [error, setError] = useState(null)
   const fetchingRef = useRef(false)
+  const prevStateRef = useRef(null)
 
   const [displayNames, setDisplayNames] = useState(() => {
     try { return JSON.parse(localStorage.getItem('npc-display-names') ?? '{}') }
@@ -86,6 +87,16 @@ export default function App() {
     const id = setInterval(fetchState, POLL_INTERVAL_MS)
     return () => clearInterval(id)
   }, [fetchState])
+
+  useEffect(() => {
+    if (prevStateRef.current === null && state && state.tick === 0 && !state.running) {
+      setPhotos({})
+      setDisplayNames({})
+      localStorage.removeItem('npc-photos')
+      localStorage.removeItem('npc-display-names')
+    }
+    prevStateRef.current = state
+  }, [state])
 
   const sendControl = async (action) => {
     try {
