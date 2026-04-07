@@ -1,11 +1,15 @@
 package com.aiworld;
 
+import com.aiworld.action.DialogTask;
 import com.aiworld.core.World;
 import com.aiworld.core.WorldLoop;
 import com.aiworld.llm.ClaudeClient;
 import com.aiworld.model.Location;
 import com.aiworld.model.Resource;
 import com.aiworld.npc.NPC;
+import com.aiworld.server.WorldServer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Simulator — application entry point.
@@ -18,17 +22,22 @@ import com.aiworld.npc.NPC;
  */
 public class Simulator {
 
-    // ── Simulation parameters ─────────────────────────────────────────
-    private static final int  WORLD_WIDTH      = 20;
-    private static final int  WORLD_HEIGHT     = 20;
-    private static final long TICK_INTERVAL_MS = 300;  // ~3 ticks/sec
-    private static final long MAX_TICKS        = 100;  // 0 = run forever
+    private static final Logger log = LoggerFactory.getLogger(Simulator.class);
 
-    public static void main(String[] args) throws InterruptedException {
+    // ── Simulation parameters (override via environment variables) ────
+    private static final int  WORLD_WIDTH      = envInt ("ECOSIM_WIDTH",    20);
+    private static final int  WORLD_HEIGHT     = envInt ("ECOSIM_HEIGHT",   20);
+    private static final long TICK_INTERVAL_MS = envLong("ECOSIM_TICK_MS",  300);  // ~3 tps
+    private static final long MAX_TICKS        = envLong("ECOSIM_MAX_TICKS",100);  // 0 = run forever
 
-        System.out.println("╔══════════════════════════════════╗");
-        System.out.println("║   AI NPC Virtual World System    ║");
-        System.out.println("╚══════════════════════════════════╝");
+    private static int  envInt (String name, int  def) { String v = System.getenv(name); return v != null ? Integer.parseInt(v)  : def; }
+    private static long envLong(String name, long def) { String v = System.getenv(name); return v != null ? Long.parseLong(v)    : def; }
+
+    public static void main(String[] args) throws Exception {
+
+        log.info("╔══════════════════════════════════╗");
+        log.info("║   AI NPC Virtual World System    ║");
+        log.info("╚══════════════════════════════════╝");
 
         // ── 1. Create world ──────────────────────────────────────────
         World world = new World(WORLD_WIDTH, WORLD_HEIGHT);
@@ -45,13 +54,13 @@ public class Simulator {
             new Location(10, 10), 30,  50, 1));
 
         // ── 3. Spawn NPCs ────────────────────────────────────────────
-        ClaudeClient claude = ClaudeClient.fromEnv();
-
-        NPC alice = new NPC("Alice", new Location(2,  2));  alice.setLLMClient(claude);
-        NPC bob   = new NPC("Bob",   new Location(14, 4));  bob.setLLMClient(claude);
-        NPC carol = new NPC("Carol", new Location(9,  14)); carol.setLLMClient(claude);
-        NPC dave  = new NPC("Dave",  new Location(5,  10)); dave.setLLMClient(claude);
-        NPC eve   = new NPC("Eve",   new Location(18, 18)); eve.setLLMClient(claude);
+        // Each NPC gets its own LLM client so circuit-breaker faults are isolated
+        // per-NPC rather than blocking all LLM calls when one NPC's prompt fails.
+        NPC alice = new NPC("Alice", new Location(2,  2));  alice.setLLMClient(ClaudeClient.fromEnv());
+        NPC bob   = new NPC("Bob",   new Location(14, 4));  bob.setLLMClient(ClaudeClient.fromEnv());
+        NPC carol = new NPC("Carol", new Location(9,  14)); carol.setLLMClient(ClaudeClient.fromEnv());
+        NPC dave  = new NPC("Dave",  new Location(5,  10)); dave.setLLMClient(ClaudeClient.fromEnv());
+        NPC eve   = new NPC("Eve",   new Location(18, 18)); eve.setLLMClient(ClaudeClient.fromEnv());
 
         world.addNPC(alice);
         world.addNPC(bob);
@@ -59,18 +68,50 @@ public class Simulator {
         world.addNPC(dave);
         world.addNPC(eve);
 
-        // ── 4. Start the simulation loop ─────────────────────────────
+        // ── 4. Create the simulation loop (not started yet) ──────────
         WorldLoop loop = new WorldLoop(world, TICK_INTERVAL_MS, MAX_TICKS);
-        loop.start();
 
-        // ── 5. Block main thread until simulation ends ───────────────
+        // ── 5. Start the HTTP server ──────────────────────────────────
+        WorldServer server = new WorldServer(loop);
+        try {
+            server.start();
+        } catch (Exception e) {
+            log.error("Failed to start WorldServer — cannot continue without UI: {}", e.getMessage());
+            return;  // nothing can start the loop without the server, so halt cleanly
+        }
+
+        // Shut the server down cleanly on Ctrl+C or any JVM exit signal.
+        // The server is NOT stopped when the simulation loop ends — it stays
+        // alive so the browser can continue polling /api/state and display
+        // the final world state. The user kills the process when done viewing.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.info("Shutdown signal received — stopping server and executors.");
+            server.stop();
+            loop.stop();              // shuts down world-loop scheduler + per-NPC LLM threads
+            DialogTask.shutdownExecutor();
+        }, "shutdown-hook"));
+
+        log.info("Ready — open http://localhost:5173 to configure and start the simulation.");
+
+        // ── 6. Wait for the web UI to start the loop, then wait for it to finish ──
+        // Cap the wait at 30 minutes; if the user never clicks Start in the UI
+        // the process would otherwise park the main thread indefinitely.
+        long startDeadlineMs = System.currentTimeMillis() + 30L * 60 * 1000;
+        while (!loop.isRunning()) {
+            if (System.currentTimeMillis() > startDeadlineMs) {
+                log.warn("Simulation was never started via the UI after 30 minutes — exiting.");
+                return;
+            }
+            Thread.sleep(200);
+        }
         while (loop.isRunning()) {
             Thread.sleep(200);
         }
 
-        // ── 6. Print final world state ───────────────────────────────
-        System.out.println("\n══ Final World State ══");
-        world.getNpcs().forEach(npc -> System.out.println("  " + npc));
-        System.out.println("Simulation complete.");
+        // ── 7. Print final world state ───────────────────────────────
+        log.info("══ Final World State ══");
+        world.getNpcs().forEach(npc -> log.info("  {}", npc));
+        world.getDeadNpcs().forEach(npc -> log.info("  {} [DEAD]", npc));
+        log.info("Simulation complete. Server still running — press Ctrl+C to exit.");
     }
 }

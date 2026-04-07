@@ -3,7 +3,7 @@ package com.aiworld.npc;
 import com.aiworld.goal.Goal;
 
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -26,22 +26,18 @@ public class GoalSystem {
     }
 
     /**
-     * Updates all goal weights based on current state and tick.
+     * Calls {@link Goal#onTick} for every goal, allowing stateful goals
+     * (SocialGoal, ExploreGoal) to advance their internal counters.
      * Called once per tick before action selection.
+     *
+     * Renamed from {@code updateAll} — the previous name implied goal weights
+     * change dynamically, but personality weights are final in every
+     * implementation. This is purely a per-tick state hook.
      */
-    public void updateAll(NPCState state, long currentTick) {
+    public void tickAll(NPCState state, long currentTick) {
         for (Goal goal : goals) {
-            goal.updateWeight(state, currentTick);
+            goal.onTick(state, currentTick);
         }
-    }
-
-    /**
-     * Returns the goal with the highest current urgency.
-     * This is the goal the NPC will try to satisfy this tick.
-     */
-    public Optional<Goal> getMostUrgentGoal(NPCState state) {
-        return goals.stream()
-            .max(Comparator.comparingDouble(g -> g.computeUrgency(state)));
     }
 
     /**
@@ -68,5 +64,5 @@ public class GoalSystem {
             .findFirst();
     }
 
-    public List<Goal> getGoals() { return goals; }
+    public List<Goal> getGoals() { return Collections.unmodifiableList(goals); }
 }

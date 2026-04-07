@@ -27,10 +27,20 @@ public class MockLLMClient implements LLMClient {
             intent = "Immediate survival — find food before health collapses";
             reason = "Mock: food detected as zero or starvation keyword found";
 
-        } else if (containsAny(prompt, "WAS_ATTACKED", "ATTACKED")) {
-            type   = Strategy.Type.AVOID_CONFLICT;
-            intent = "Recover and avoid the NPC that attacked recently";
-            reason = "Mock: WAS_ATTACKED event in memory";
+        } else if (containsAny(prompt, "WAS_ATTACKED")) {
+            // Retaliate if healthy enough; flee if already weakened
+            boolean weakened = containsAny(prompt,
+                "Health:   1/", "Health:   2/", "Health:   3/",
+                "Health:   4/", "Health:   5/", "Food: 0/", "Food: 1/");
+            if (weakened) {
+                type   = Strategy.Type.AVOID_CONFLICT;
+                intent = "Too weak to fight back — flee and recover";
+                reason = "Mock: attacked while health/food critically low";
+            } else {
+                type   = Strategy.Type.RETALIATE;
+                intent = "Strike back at the attacker while still strong";
+                reason = "Mock: attacked but health is sufficient to retaliate";
+            }
 
         } else if (containsAny(prompt, "Energy: 0/", "Energy: 1/", "Energy: 2/")) {
             type   = Strategy.Type.CONSERVE_ENERGY;
@@ -42,7 +52,7 @@ public class MockLLMClient implements LLMClient {
             intent = "Roam to discover resources and other NPCs";
             reason = "Mock: no nearby NPCs detected — explore to find them";
 
-        } else if (containsAny(prompt, "FORMED_ALLIANCE", "trust: 0.7", "trust: 0.8", "trust: 0.9")) {
+        } else if (containsAny(prompt, "trust: 0.7", "trust: 0.8", "trust: 0.9")) {
             type   = Strategy.Type.SEEK_ALLIES;
             intent = "Deepen alliances with trusted nearby NPCs";
             reason = "Mock: existing high-trust relationships detected";
@@ -53,7 +63,7 @@ public class MockLLMClient implements LLMClient {
             reason = "Mock: default strategy — food gathering is always useful";
         }
 
-        return new Strategy(type, intent, "", reason, currentTick);
+        return new Strategy(type, intent, reason, currentTick);
     }
 
     @Override
@@ -63,7 +73,9 @@ public class MockLLMClient implements LLMClient {
         String listenerLine;
         double valence;
 
-        if (containsAny(prompt, "hostility", "WAS_ATTACKED", "STOLE")) {
+        // Hostile tone: attacked/robbed events, or "enemy" relationship label
+        // (DialogPromptBuilder writes "enemy" only when trust < 0.35)
+        if (containsAny(prompt, "WAS_ATTACKED", "STOLE_FOOD", "enemy")) {
             speakerLine  = "Stay away from my resources.";
             listenerLine = "I wasn't looking for trouble.";
             valence      = -0.4;

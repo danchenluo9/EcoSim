@@ -12,7 +12,7 @@ import com.aiworld.npc.NPCState;
 public class SurvivalGoal implements Goal {
 
     private static final double CRITICAL_THRESHOLD = 0.25;
-    private double weight;
+    private final double weight;
 
     public SurvivalGoal(double initialWeight) {
         this.weight = initialWeight;
@@ -23,23 +23,22 @@ public class SurvivalGoal implements Goal {
 
     @Override
     public double computeUrgency(NPCState state) {
-        // Urgency is the inverse of the minimum vital stat
-        double minVital = Math.min(
-            Math.min(state.getEnergyRatio(), state.getFoodRatio()),
-            state.getHealthRatio()
-        );
+        // Urgency is driven by food and health — the long-cycle survival stats.
+        // Energy is deliberately excluded: it is a short-cycle stat (resting restores
+        // 20 units in one action) and mixing it in caused "tired but fed" NPCs to
+        // enter full critical-survival mode, suppressing social behaviour unnecessarily.
+        double minVital = Math.min(state.getFoodRatio(), state.getHealthRatio());
+
         // Exponential urgency curve — critical below 25%
         if (minVital < CRITICAL_THRESHOLD) {
-            return 1.0 - (minVital / CRITICAL_THRESHOLD) * 0.5; // 0.5 – 1.0
+            return (1.0 - (minVital / CRITICAL_THRESHOLD) * 0.5) * weight; // 0.5w – 1.0w
         }
-        return (1.0 - minVital) * 0.5; // 0.0 – 0.5 when comfortable
+        return (1.0 - minVital) * 0.5 * weight; // 0.0 – 0.5w when comfortable
     }
 
     @Override
-    public void updateWeight(NPCState state, long currentTick) {
-        // Survival weight is stable — it's always relevant
+    public void onTick(NPCState state, long currentTick) {
+        // Survival weight is a fixed personality trait — no per-tick state to update.
     }
 
-    @Override
-    public double getWeight() { return weight; }
 }

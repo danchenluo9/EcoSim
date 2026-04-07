@@ -1,15 +1,19 @@
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/Simulator.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/Action.java
+/Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/AttackAction.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/DialogAction.java
+/Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/DialogTask.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/GatherAction.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/InteractAction.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/MoveAction.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/RestAction.java
+/Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/action/StealAction.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/core/World.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/core/WorldLoop.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/decision/DecisionEngine.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/dialog/DialogPromptBuilder.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/dialog/DialogSession.java
+/Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/goal/AggressionGoal.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/goal/ExploreGoal.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/goal/Goal.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/goal/SocialGoal.java
@@ -30,3 +34,5 @@
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/npc/Memory.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/npc/NPC.java
 /Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/npc/NPCState.java
+/Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/server/StateSerializer.java
+/Users/danchenluo/Documents/GitHub/EcoSim/src/main/java/com/aiworld/server/WorldServer.java

@@ -1,6 +1,11 @@
 package com.aiworld.llm;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Arrays;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Parses and validates raw JSON text from the LLM into a {@link Strategy}.
@@ -23,10 +28,12 @@ import java.util.Set;
  */
 public class StrategyValidator {
 
-    private static final Set<String> VALID_TYPES = Set.of(
-        "GATHER_FOOD", "SEEK_ALLIES", "EXPLORE",
-        "AVOID_CONFLICT", "CONSERVE_ENERGY", "SURVIVE"
-    );
+    private static final Logger log = LoggerFactory.getLogger(StrategyValidator.class);
+
+    // Derived from the enum — adding a new Strategy.Type automatically becomes valid here
+    private static final Set<String> VALID_TYPES = Arrays.stream(Strategy.Type.values())
+        .map(Enum::name)
+        .collect(Collectors.toUnmodifiableSet());
 
     /**
      * Parses the model's text output into a validated Strategy.
@@ -41,56 +48,62 @@ public class StrategyValidator {
         // Find the first JSON object that contains a "strategy" key
         int strategyKeyIdx = text.indexOf("\"strategy\"");
         if (strategyKeyIdx == -1) {
-            System.err.println("[StrategyValidator] No 'strategy' key in: " + abbreviated(text));
+            log.warn("No 'strategy' key in: {}", abbreviated(text));
             return null;
         }
 
         int braceStart = text.lastIndexOf('{', strategyKeyIdx);
-        int braceEnd   = text.indexOf('}',  strategyKeyIdx);
-        if (braceStart == -1 || braceEnd == -1) {
-            System.err.println("[StrategyValidator] Could not bound JSON object in: " + abbreviated(text));
+        if (braceStart == -1) {
+            log.warn("Could not find opening brace in: {}", abbreviated(text));
+            return null;
+        }
+        // Find matching closing brace, accounting for nested braces
+        int depth = 0, braceEnd = -1;
+        for (int i = braceStart; i < text.length(); i++) {
+            if (text.charAt(i) == '{') depth++;
+            else if (text.charAt(i) == '}') { depth--; if (depth == 0) { braceEnd = i; break; } }
+        }
+        if (braceEnd == -1) {
+            log.warn("Could not find closing brace in: {}", abbreviated(text));
             return null;
         }
 
-        // Normalise escaped quotes so extractField works cleanly
-        String json = text.substring(braceStart, braceEnd + 1)
-                          .replace("\\\"", "\u0000")
-                          .replace("\\n",  " ");
+        String json = text.substring(braceStart, braceEnd + 1);
 
         String strategyRaw = extractField(json, "strategy");
         String intent      = extractField(json, "intent");
-        String target      = extractField(json, "target");
         String reason      = extractField(json, "reason");
 
         if (strategyRaw == null) {
-            System.err.println("[StrategyValidator] Missing 'strategy' value in: " + json);
+            log.warn("Missing 'strategy' value in: {}", json);
             return null;
         }
 
-        // Restore any escaped quotes and normalise to upper case
-        String strategyNorm = strategyRaw.replace("\u0000", "\"").trim().toUpperCase();
+        String strategyNorm = strategyRaw.trim().toUpperCase();
 
         if (!VALID_TYPES.contains(strategyNorm)) {
-            System.err.println("[StrategyValidator] Unknown strategy type '" + strategyNorm
-                + "'. Valid: " + VALID_TYPES);
+            log.warn("Unknown strategy type '{}'. Valid: {}", strategyNorm, VALID_TYPES);
             return null;
         }
 
         Strategy.Type type = Strategy.Type.valueOf(strategyNorm);
         return new Strategy(
             type,
-            restoreQuotes(intent),
-            restoreQuotes(target),
-            restoreQuotes(reason),
+            intent != null ? intent.trim() : "",
+            reason != null ? reason.trim() : "",
             currentTick
         );
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Extracts a JSON string field value, correctly handling escape sequences
+     * (\" \\ \n) without any pre-processing tricks.
+     */
     private static String extractField(String json, String key) {
-        String marker   = "\"" + key + "\"";
-        int    keyIdx   = json.indexOf(marker);
+        String marker = "\"" + key + "\"";
+        int keyIdx = json.indexOf(marker);
         if (keyIdx == -1) return null;
 
         int colonIdx = json.indexOf(':', keyIdx + marker.length());
@@ -99,17 +112,24 @@ public class StrategyValidator {
         int quoteStart = json.indexOf('"', colonIdx + 1);
         if (quoteStart == -1) return null;
 
-        int quoteEnd = quoteStart + 1;
-        while (quoteEnd < json.length() && json.charAt(quoteEnd) != '"') {
-            quoteEnd++;
+        StringBuilder value = new StringBuilder();
+        int i = quoteStart + 1;
+        while (i < json.length()) {
+            char c = json.charAt(i);
+            if (c == '\\' && i + 1 < json.length()) {
+                char next = json.charAt(i + 1);
+                if (next == '"')  { value.append('"');  i += 2; continue; }
+                if (next == '\\') { value.append('\\'); i += 2; continue; }
+                if (next == 'n')  { value.append('\n'); i += 2; continue; }
+                if (next == 'r')  { value.append('\r'); i += 2; continue; }
+                if (next == 't')  { value.append('\t'); i += 2; continue; }
+            }
+            if (c == '"') break;
+            value.append(c);
+            i++;
         }
-        if (quoteEnd >= json.length()) return null;
-
-        return json.substring(quoteStart + 1, quoteEnd);
-    }
-
-    private static String restoreQuotes(String s) {
-        return s == null ? "" : s.replace("\u0000", "\"").trim();
+        if (i >= json.length()) return null;  // unterminated string — malformed JSON
+        return value.toString();
     }
 
     private static String abbreviated(String s) {
