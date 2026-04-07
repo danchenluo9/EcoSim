@@ -132,7 +132,7 @@ public class Memory {
         }
     }
 
-    public Map<String, NPCImpression> getAllImpressions() { return Collections.unmodifiableMap(impressions); }
+    public Map<String, NPCImpression> getAllImpressions() { return Collections.unmodifiableMap(new HashMap<>(impressions)); }
 
     /** Removes impressions for dead NPCs so living NPCs don't carry stale social data. */
     public void cleanImpressions(Set<String> deadIds) {

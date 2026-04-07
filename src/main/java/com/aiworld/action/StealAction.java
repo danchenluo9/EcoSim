@@ -73,6 +73,7 @@ public class StealAction implements Action {
 
     @Override
     public void execute(AbstractNPC npc, World world) {
+        if (target.getState().getFood() <= 0) return;
         long tick  = world.getCurrentTick();
         int  taken = Math.min(FOOD_TAKEN, target.getState().getFood());
 

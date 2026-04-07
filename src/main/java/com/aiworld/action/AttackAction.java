@@ -71,6 +71,7 @@ public class AttackAction implements Action {
 
     @Override
     public void execute(AbstractNPC npc, World world) {
+        if (target.getState().isDead()) return;
         long tick = world.getCurrentTick();
 
         // Deal damage

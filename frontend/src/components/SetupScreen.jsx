@@ -42,7 +42,7 @@ function NPCSetupCard({ npc, color, photo, displayName, archetype, onUpdateName,
       >
         {photo
           ? <img src={photo} alt={displayName} className="npc-avatar-img" />
-          : <span className="npc-avatar-initial">{displayName[0].toUpperCase()}</span>
+          : <span className="npc-avatar-initial">{displayName ? displayName[0].toUpperCase() : '?'}</span>
         }
         <span className="npc-avatar-overlay">📷</span>
         <input

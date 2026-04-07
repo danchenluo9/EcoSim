@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -115,8 +116,9 @@ public class World {
         // The world lock is free here, so /api/state polls are never blocked
         // by a 20-second LLM timeout. All NPCs' calls run concurrently.
         if (!dialogTasks.isEmpty()) {
+            ExecutorService dialogExec = DialogTask.EXECUTOR;
             CompletableFuture<?>[] futures = dialogTasks.stream()
-                .map(task -> CompletableFuture.runAsync(task::executeCall, DialogTask.EXECUTOR))
+                .map(task -> CompletableFuture.runAsync(task::executeCall, dialogExec))
                 .toArray(CompletableFuture[]::new);
             CompletableFuture.allOf(futures).join(); // callRaw() never throws; join() is safe
 
