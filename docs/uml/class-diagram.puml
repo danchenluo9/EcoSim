@@ -1,0 +1,325 @@
+@startuml EcoSim Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam classFontSize 12
+skinparam classHeaderBackgroundColor #1e3a5f
+skinparam classHeaderFontColor #ffffff
+skinparam classBorderColor #2d6099
+skinparam classBackgroundColor #f0f6ff
+skinparam ArrowColor #2d6099
+skinparam packageBackgroundColor #e8f0fe
+skinparam packageBorderColor #2d6099
+skinparam packageFontStyle bold
+skinparam linetype ortho
+skinparam padding 5
+skinparam nodesep 40
+skinparam ranksep 50
+
+title EcoSim — Class Diagram (High-Level)
+
+' ── Core ─────────────────────────────────────────────────────────────────
+package "core" {
+  class World {
+    -width : int
+    -height : int
+    -currentTick : long
+    +tick()
+    +addNPC(npc)
+    +getNPCsNear(caller, radius) : List
+    +getResourceAt(loc) : Optional<Resource>
+    +getNearestResourceLocation(from, type) : Location
+  }
+
+  class WorldLoop {
+    -running : volatile boolean
+    -paused : volatile boolean
+    -future : volatile ScheduledFuture
+    +start()
+    +stop()
+    +pause()
+    +resume()
+    +run()
+    +isRunning() : boolean
+  }
+}
+
+' ── Server ────────────────────────────────────────────────────────────────
+package "server" {
+  class WorldServer {
+    +start()
+    +stop()
+    -handleState(exchange)
+    -handleControl(exchange)
+    -handleNpc(exchange)
+  }
+
+  class StateSerializer {
+    {static} +serialize(world, loop) : String
+  }
+}
+
+' ── NPC ──────────────────────────────────────────────────────────────────
+package "npc" {
+  abstract class AbstractNPC {
+    #id : String
+    #state : NPCState
+    #goalSystem : GoalSystem
+    #memory : Memory
+    +update(world)
+    +prepareDialogTask(world) : DialogTask
+    +setLLMClient(client)
+    +recordAction(tick, name)
+  }
+
+  class NPC {
+    -archetype : String
+    -lastMetNpcTick : Map<String,Long>
+    +reconfigureGoals(archetype)
+    #onPreUpdate(world)
+  }
+
+  class NPCState {
+    -health : int
+    -food : int
+    -energy : int
+    -location : Location
+    +passiveTick()
+    +damageHealth(amount)
+    +depleteFood(amount)
+    +depleteEnergy(amount)
+    +isDead() : boolean
+    +getFoodRatio() : double
+    +getHealthRatio() : double
+  }
+
+  class GoalSystem {
+    +addGoal(goal)
+    +tickAll(state, tick)
+    +getUrgency(name, state) : double
+    +getGoalByType(type) : Optional<Goal>
+  }
+
+  class Memory {
+    -events : Deque<MemoryEvent>
+    -impressions : Map<String, NPCImpression>
+    -conversationLog : Deque<DialogSession>
+    +addEvent(event)
+    +getEventsOfType(type) : Collection
+    +getImpression(id) : Optional<NPCImpression>
+    +recordPositiveInteraction(id, delta)
+    +recordNegativeInteraction(id, delta)
+    +decayImpressions()
+    +addConversation(session)
+    +getRecentConversations(n) : List
+  }
+}
+
+' ── Goals ────────────────────────────────────────────────────────────────
+package "goal" {
+  interface Goal {
+    +getUrgency(state) : double
+    +tick(state, currentTick)
+  }
+
+  class SurvivalGoal
+  class SocialGoal {
+    +onInteracted()
+  }
+  class ExploreGoal
+  class AggressionGoal
+}
+
+' ── Decision + Actions ───────────────────────────────────────────────────
+package "decision & action" {
+  class DecisionEngine {
+    +decide(npc, world)
+    -buildCandidateActions(npc, world) : List
+    -scoreAction(action, npc, world) : double
+  }
+
+  interface Action {
+    +getName() : String
+    +canExecute(npc, world) : boolean
+    +execute(npc, world)
+    +estimatedUtility(npc, world) : double
+  }
+
+  class GatherAction {
+    -cachedResource : Resource
+  }
+  class InteractAction {
+    -cachedTarget : AbstractNPC
+  }
+  class AttackAction {
+    -target : AbstractNPC
+  }
+  class StealAction {
+    -target : AbstractNPC
+  }
+  class MoveAction {
+    -target : Location
+    -reason : Reason
+  }
+  class RestAction
+
+  class DialogAction {
+    -lastDialogTick : long
+    +prepare(npc, world) : DialogTask
+    +markCompleted(tick)
+  }
+
+  class DialogTask {
+    {static} +EXECUTOR : ExecutorService
+    -rawResult : String
+    +executeCall()
+    +applyResult(world)
+    {static} +shutdownExecutor()
+  }
+}
+
+' ── Dialog ───────────────────────────────────────────────────────────────
+package "dialog" {
+  class DialogSession {
+    -tick : long
+    -speakerId : String
+    -listenerId : String
+    -speakerLine : String
+    -listenerLine : String
+    -valence : double
+  }
+
+  class DialogPromptBuilder {
+    {static} +build(speaker, listener, world) : String
+  }
+}
+
+' ── LLM ──────────────────────────────────────────────────────────────────
+package "llm" {
+  interface LLMClient {
+    +call(prompt, tick) : Strategy
+    +callRaw(prompt) : String
+  }
+
+  class ClaudeClient {
+    -consecutiveFailures : int
+    -circuitOpenUntilMs : volatile long
+    +call(prompt, tick) : Strategy
+    +callRaw(prompt) : String
+    {static} +fromEnv() : ClaudeClient
+  }
+
+  class MockLLMClient
+
+  class StrategyManager {
+    -currentStrategy : volatile Strategy
+    -pendingCall : Future<Strategy>
+    +tick(npc, world)
+    +shutdown()
+    +cancelPendingCall()
+    +getCurrentStrategy() : Strategy
+  }
+
+  class Strategy {
+    -type : Type
+    -intent : String
+    -reason : String
+    +getActionMultiplier(name) : double
+    {static} +defaultStrategy(tick) : Strategy
+  }
+
+  class StrategyValidator {
+    {static} +parse(text, tick) : Strategy
+  }
+}
+
+' ── Model ────────────────────────────────────────────────────────────────
+package "model" {
+  class MemoryEvent {
+    -tick : long
+    -type : EventType
+    -description : String
+    -targetId : String
+  }
+
+  class NPCImpression {
+    -trust : double
+    -hostility : double
+    +recordPositiveInteraction(delta)
+    +recordNegativeInteraction(delta)
+    +decayOverTime(rate)
+  }
+
+  class Resource {
+    -type : Type
+    -quantity : int
+    +tick()
+    +consume(amount) : int
+    +isDepleted() : boolean
+  }
+
+  class Location {
+    -x : int
+    -y : int
+    +distanceTo(other) : int
+  }
+}
+
+' ── Relationships ─────────────────────────────────────────────────────────
+
+' Core
+WorldLoop --> World : drives
+WorldServer --> WorldLoop : controls
+StateSerializer ..> World : reads
+StateSerializer ..> WorldLoop : reads
+
+' World owns NPCs and resources
+World "1" *-- "0..*" AbstractNPC : npcs
+World "1" *-- "0..*" Resource : resources
+
+' NPC hierarchy
+AbstractNPC <|-- NPC
+AbstractNPC "1" *-- "1" NPCState : state
+AbstractNPC "1" *-- "1" GoalSystem : goalSystem
+AbstractNPC "1" *-- "1" Memory : memory
+AbstractNPC "1" *-- "1" DecisionEngine : decisionEngine
+AbstractNPC "1" *-- "1" DialogAction : dialogAction
+AbstractNPC "1" o-- "0..1" StrategyManager : strategyManager
+AbstractNPC "1" o-- "0..1" LLMClient : llmClient
+
+' Goals
+GoalSystem "1" *-- "1..*" Goal : goals
+Goal <|.. SurvivalGoal
+Goal <|.. SocialGoal
+Goal <|.. ExploreGoal
+Goal <|.. AggressionGoal
+
+' Memory contents
+Memory "1" *-- "0..*" MemoryEvent : events
+Memory "1" *-- "0..*" NPCImpression : impressions
+Memory "1" *-- "0..*" DialogSession : conversationLog
+
+' Decision and Actions
+DecisionEngine ..> Action : creates & selects
+Action <|.. GatherAction
+Action <|.. InteractAction
+Action <|.. AttackAction
+Action <|.. StealAction
+Action <|.. MoveAction
+Action <|.. RestAction
+DialogAction ..> DialogTask : creates
+AttackAction --> AbstractNPC : target
+StealAction --> AbstractNPC : target
+
+' LLM
+StrategyManager --> LLMClient : uses
+StrategyManager "1" *-- "1" Strategy : currentStrategy
+LLMClient <|.. ClaudeClient
+LLMClient <|.. MockLLMClient
+StrategyValidator ..> Strategy : produces
+DialogTask --> LLMClient : uses
+
+' Model
+NPCState "1" *-- "1" Location : location
+Resource "1" *-- "1" Location : location
+
+@enduml
