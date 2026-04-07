@@ -29,7 +29,8 @@ public class InteractAction implements Action {
 
     private static final int    INTERACTION_RADIUS   = 2;
     private static final double MIN_SOCIAL_URGENCY   = 0.1;   // blocks Fighter (max ~0.05)
-    private static final double MIN_FOOD_RATIO_SHARE = 0.3;   // don't share food while in survival territory
+    private static final double MIN_FOOD_RATIO_SHARE = 0.4;   // ensures max share (10 food) still leaves actor
+                                                               // above the critical survival threshold (25%)
 
     @Override
     public String getName() { return "Interact"; }

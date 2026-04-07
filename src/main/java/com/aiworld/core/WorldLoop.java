@@ -45,7 +45,7 @@ public class WorldLoop implements Runnable {
     }
 
     /** Starts the simulation loop on a background thread. */
-    public void start() {
+    public synchronized void start() {
         if (running) throw new IllegalStateException("Loop already running");
         running  = true;
         executor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -62,7 +62,7 @@ public class WorldLoop implements Runnable {
      * Stops the loop gracefully, waiting up to 2 seconds for the current tick to finish.
      * Also shuts down per-NPC LLM executor threads so the JVM can exit cleanly.
      */
-    public void stop() {
+    public synchronized void stop() {
         running = false;
         if (future   != null) future.cancel(false);
         if (executor != null) {

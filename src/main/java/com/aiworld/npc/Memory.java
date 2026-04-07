@@ -22,6 +22,12 @@ public class Memory {
     private static final int    MAX_CONVERSATIONS = 20;  // rolling conversation log
     private static final double DECAY_RATE        = 0.005; // trust decay per tick
 
+    /** Max MET_NPC events kept in the buffer.
+     *  In dense clusters each NPC generates ~4 MET_NPC events per 10 ticks.
+     *  Capping them prevents low-signal "Spotted X" entries from evicting high-signal
+     *  combat/theft events that the LLM and cooldown logic depend on. */
+    private static final int MAX_MET_NPC_EVENTS = 10;
+
     /** Chronological episodic event buffer. */
     private final Deque<MemoryEvent> events = new ArrayDeque<>();
 
@@ -36,8 +42,14 @@ public class Memory {
 
     // ── Event log ────────────────────────────────────────────────────
 
-    /** Appends a new event, evicting the oldest if at capacity. */
+    /** Appends a new event, evicting the oldest if at capacity.
+     *  MET_NPC events are capped independently: if the bucket is full, the new
+     *  event is dropped rather than evicting an older (higher-signal) event. */
     public void addEvent(MemoryEvent event) {
+        if (event.getType() == MemoryEvent.EventType.MET_NPC) {
+            ArrayDeque<MemoryEvent> metBucket = eventIndex.get(MemoryEvent.EventType.MET_NPC);
+            if (metBucket != null && metBucket.size() >= MAX_MET_NPC_EVENTS) return;
+        }
         if (events.size() >= MAX_EVENTS) {
             MemoryEvent evicted = events.pollFirst();
             if (evicted != null) {

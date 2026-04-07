@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * DecisionEngine — the NPC's "brain."
@@ -41,8 +41,7 @@ public class DecisionEngine {
      */
     private record MoveCandidate(Location target, double motivation, MoveAction.Reason reason) {}
 
-    private static final Logger log    = LoggerFactory.getLogger(DecisionEngine.class);
-    private static final Random RANDOM = new Random();
+    private static final Logger log = LoggerFactory.getLogger(DecisionEngine.class);
 
     /**
      * Selects and executes the best action for this NPC this tick.
@@ -230,6 +229,6 @@ public class DecisionEngine {
                 valid.add(new Location(nx, ny));
             }
         }
-        return valid.isEmpty() ? current : valid.get(RANDOM.nextInt(valid.size()));
+        return valid.isEmpty() ? current : valid.get(ThreadLocalRandom.current().nextInt(valid.size()));
     }
 }

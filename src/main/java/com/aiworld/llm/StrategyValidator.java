@@ -123,6 +123,13 @@ public class StrategyValidator {
                 if (next == 'n')  { value.append('\n'); i += 2; continue; }
                 if (next == 'r')  { value.append('\r'); i += 2; continue; }
                 if (next == 't')  { value.append('\t'); i += 2; continue; }
+                if (next == 'b')  { value.append('\b'); i += 2; continue; }
+                if (next == 'f')  { value.append('\f'); i += 2; continue; }
+                if (next == 'u' && i + 5 < json.length()) {
+                    String hex = json.substring(i + 2, i + 6);
+                    try { value.append((char) Integer.parseInt(hex, 16)); i += 6; continue; }
+                    catch (NumberFormatException ignored) {}
+                }
             }
             if (c == '"') break;
             value.append(c);

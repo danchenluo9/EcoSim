@@ -217,6 +217,12 @@ public class WorldServer {
 
     private static String esc(String s) {
         if (s == null) return "";
-        return s.replace("\"", "\\\"");
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f");
     }
 }

@@ -83,8 +83,10 @@ public class World {
             // in combat, food gathering, or dialog initiation.
             List<AbstractNPC> updateOrder = new ArrayList<>(npcs);
             Collections.shuffle(updateOrder, ThreadLocalRandom.current());
+            // Update all NPCs first so dialog prompts capture the full post-update world state.
+            // (AbstractNPC.update() Javadoc: "prepareDialogTask is called after all NPC updates")
+            updateOrder.forEach(npc -> npc.update(this));
             updateOrder.forEach(npc -> {
-                npc.update(this);
                 DialogTask task = npc.prepareDialogTask(this);
                 if (task != null) dialogTasks.add(task);
             });

@@ -94,7 +94,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 0.3;  // suppress aimless movement
                     case "Move":           return 0.6;  // legacy fallback
                     case "Interact":       return 0.2;
-                    case "Dialog":         return 0.2;  // focused on food, no time to talk
                     case "Steal":          return 1.8;  // steal supplements gathering when food is scarce
                 }
                 break;
@@ -108,7 +107,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 0.8;  // mild suppression — random wandering less useful
                     case "Move":           return 1.5;  // legacy fallback
                     case "Interact":       return 2.5;
-                    case "Dialog":         return 3.0;  // talking is the primary alliance tool
                     case "Steal":          return 0.1;  // don't steal from potential allies
                 }
                 break;
@@ -122,7 +120,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 3.0;  // exploration is the point
                     case "Move":           return 2.5;  // legacy fallback
                     case "Interact":       return 0.8;
-                    case "Dialog":         return 1.2;  // open to meeting people while exploring
                     case "Steal":          return 0.5;  // mild suppression — exploring, not raiding
                 }
                 break;
@@ -136,7 +133,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 1.5;  // keep moving to put distance between threats
                     case "Move":           return 1.5;  // legacy fallback
                     case "Interact":       return 0.1;  // avoid physical cooperation — too exposed
-                    case "Dialog":         return 0.5;  // talking can de-escalate; less risky than physical contact
                     case "Steal":          return 0.1;  // stealing escalates conflict — avoid
                 }
                 break;
@@ -150,7 +146,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 0.2;  // suppress aimless movement — costs energy for nothing
                     case "Move":           return 0.3;  // legacy fallback
                     case "Interact":       return 0.5;
-                    case "Dialog":         return 0.7;  // talking costs no energy — relatively fine
                     case "Steal":          return 1.2;  // low-energy food acquisition
                 }
                 break;
@@ -164,7 +159,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 0.2;  // suppress aimless movement in emergency
                     case "Move":           return 0.7;  // legacy fallback
                     case "Interact":       return 0.1;
-                    case "Dialog":         return 0.1;  // emergency — no time for conversation
                     case "Steal":          return 2.0;  // desperate — take food by any means
                 }
                 break;
@@ -178,7 +172,6 @@ public class Strategy {
                     case "Move:EXPLORE":   return 1.5;  // pursuing enemy = active movement
                     case "Move":           return 1.3;  // legacy fallback
                     case "Interact":       return 0.3;
-                    case "Dialog":         return 0.4;  // verbal confrontation — just above suppress threshold
                     case "Steal":          return 0.3;  // focused on fighting, not sneaking
                 }
                 break;

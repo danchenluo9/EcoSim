@@ -121,6 +121,6 @@ public class StealAction implements Action {
         // respects allies until starvation forces their hand, then all bets are off.
         double trustPenalty = survivalNeed < TRUST_GATE_NEED ? trust * 0.5 : 0.0;
 
-        return Math.min(1.0, survivalNeed * 0.7 + hostility * 0.3 - trustPenalty);
+        return Math.max(0.0, Math.min(1.0, survivalNeed * 0.7 + hostility * 0.3 - trustPenalty));
     }
 }

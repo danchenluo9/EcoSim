@@ -70,12 +70,14 @@ public class DialogAction {
         List<AbstractNPC> nearby = world.getNPCsNear(npc, DIALOG_RADIUS);
         if (nearby.isEmpty()) return null;
 
-        // Prefer the most-trusted nearby NPC; strangers default to 0.5 (benefit of the doubt)
+        // Prefer the most-trusted nearby NPC; strangers default to 0.5 (benefit of the doubt).
+        // Secondary sort by ID breaks ties deterministically without insertion-order bias.
         AbstractNPC listener = nearby.stream()
-            .max(Comparator.comparingDouble(other ->
-                npc.getMemory().getImpression(other.getId())
-                    .map(imp -> imp.getTrust())
-                    .orElse(0.5)))
+            .max(Comparator.comparingDouble((AbstractNPC other) ->
+                    npc.getMemory().getImpression(other.getId())
+                        .map(imp -> imp.getTrust())
+                        .orElse(0.5))
+                .thenComparing(AbstractNPC::getId))
             .orElse(null);
         if (listener == null) return null;
 

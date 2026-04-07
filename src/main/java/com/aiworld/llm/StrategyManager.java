@@ -48,7 +48,8 @@ public class StrategyManager {
     // volatile: read by the HTTP server thread (StateSerializer) while written by the
     // world-loop thread (tick). Without volatile, the HTTP thread may see a stale value.
     private volatile Strategy currentStrategy;
-    private Future<Strategy> pendingCall  = null;
+    private Future<Strategy> pendingCall          = null;
+    private boolean          pendingCallIsEmergency = false;
 
     private int  ticksUntilNextCall        = BASE_COOLDOWN;
     private long lastCallTick              = Long.MIN_VALUE; // MIN_VALUE = "before any tick"
@@ -114,8 +115,9 @@ public class StrategyManager {
                 Thread.currentThread().interrupt();
                 log.warn("[{}][Strategy] LLM call interrupted", npc.getId());
             }
-            pendingCall  = null;
-            lastCallTick = now;
+            pendingCall          = null;
+            pendingCallIsEmergency = false;
+            lastCallTick         = now;
         }
 
         // ── 3. Always advance countdown ───────────────────────────────
@@ -136,11 +138,14 @@ public class StrategyManager {
             // Cancel a routine in-flight call when an emergency fires so the NPC
             // gets a fresh strategy promptly rather than waiting up to 20s for a
             // non-urgent response to complete.
-            if (starvationRisk || conflictDetected) {
+            // Never cancel an already-in-flight emergency call: LLM latency can exceed
+            // EMERGENCY_LOCKOUT ticks, so repeatedly cancelling the emergency call would
+            // prevent the NPC from ever receiving a new strategy during crisis.
+            if ((starvationRisk || conflictDetected) && !pendingCallIsEmergency) {
                 cancelPendingCall();
                 log.info("[{}][StrategyManager] Cancelled routine call — emergency overrides", npc.getId());
             } else {
-                return; // non-emergency: let the in-flight call finish
+                return; // let the in-flight call finish
             }
         }
 
@@ -165,6 +170,7 @@ public class StrategyManager {
             lastConflictEventTick = now; // advance baseline so these same events don't re-trigger
         }
 
+        pendingCallIsEmergency = starvationRisk || conflictDetected;
         pendingCall = llmExecutor.submit(() -> llmClient.call(prompt, callTick));
     }
 
@@ -178,7 +184,8 @@ public class StrategyManager {
     public void cancelPendingCall() {
         if (pendingCall != null) {
             pendingCall.cancel(true);
-            pendingCall = null;
+            pendingCall          = null;
+            pendingCallIsEmergency = false;
         }
     }
 
