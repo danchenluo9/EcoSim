@@ -7,7 +7,7 @@ package com.aiworld.model;
  */
 public class Resource {
 
-    public enum Type { FOOD, WOOD, MEDICINE }
+    public enum Type { FOOD, MEDICINE }
 
     private final Type     type;
     private final Location location;
@@ -42,8 +42,9 @@ public class Resource {
         return consumed;
     }
 
-    public boolean isDepleted()   { return quantity <= 0; }
-    public Type     getType()     { return type; }
-    public Location getLocation() { return location; }
-    public int      getQuantity() { return quantity; }
+    public boolean isDepleted()    { return quantity <= 0; }
+    public Type     getType()      { return type; }
+    public Location getLocation()  { return location; }
+    public int      getQuantity()  { return quantity; }
+    public int      getMaxQuantity(){ return maxQuantity; }
 }

@@ -1,0 +1,26 @@
+<h2>What should the UML diagram cover?</h2>
+<p class="subtitle">Pick the diagram type that best matches your goal</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Class Diagram (Structure)</h3>
+      <p>Shows all classes, their fields/methods, and relationships (inheritance, composition, associations). Best for understanding how the codebase is organized.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Sequence Diagram (Interactions)</h3>
+      <p>Shows how objects communicate over time — e.g., one full simulation tick from WorldLoop through NPC update, LLM call, dialog, and result application.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both — Class + Sequence (Recommended)</h3>
+      <p>A class diagram for structure and a sequence diagram for the tick lifecycle. Gives a complete picture of the system in one PDF with two pages.</p>
+    </div>
+  </div>
+</div>

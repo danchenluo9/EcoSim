@@ -24,3 +24,7 @@ hs_err_pid*
 replay_pid*
 
 target/
+
+.DS_Store
+.env
+/frontend/node_modules/
