@@ -1,0 +1,11 @@
+```json {   "speaker_line": "There's a berry patch east of here. We should move before others find it.",   "listener_line": "Good idea. I'm heading that way too. Mind if I join you?",   "valence": 0.65 } ```
+```json {   "speaker_line": "I'm heading upstream to check the traps. You coming or staying put?",   "listener_line": "I'll stick here and reinforce the storage. We should pool what we find.",   "valence": 0.65 } ```
+```json {   "speaker_line": "That berry patch you mentioned—we should head out before someone else finds it.",   "listener_line": "Agreed. Let's move now while we still have daylight. Together we'll secure it.",   "valence": 0.72 } ```
+```json {   "speaker_line": "We're wasting time talking. Let's move now before someone else claims it.",   "listener_line": "Fine, but don't think this makes us partners. I'm only after the berries.",   "valence": -0.35 } ```
+```json {   "speaker_line": "You betrayed me at that berry patch. Now you're finished.",   "listener_line": "Stay back, Bob. I'm not fighting you like this.",   "valence": -0.95 } ```
+```json {   "speaker_line": "You can't run forever, Alice. Not in your condition.",   "listener_line": "I'm not running anymore, Bob. Just... stay away from me.",   "valence": -0.85 } ```
+```json {   "speaker_line": "I'm heading to that berry patch now. You coming or exploring elsewhere?",   "listener_line": "I'll tag along, but I want to scout that unmapped ridge afterward.",   "valence": 0.65 } ```
+```json {   "speaker_line": "Bob: Those berries won't last long. We need to find something more substantial today.",   "listener_line": "Carol: Then come scout that ridge with me—there could be game, shelter, everything.",   "valence": 0.35 } ```
+```json {   "speaker_line": "Found berries by the creek. Come eat before we lose daylight.",   "listener_line": "Good timing. I need rest badly, but food first. Then we talk about that ridge.",   "valence": 0.62 } ```
+```json {   "speaker_line": "Those berries by the creek won't last. We need to hunt or move on soon.",   "listener_line": "I'm too exhausted to hunt right now. Let me rest a few hours, then we decide together.",   "valence": -0.35 } ```
+```json {   "speaker_line": "I'm heading upstream to scout. You do what you need to do.",   "listener_line": "Fine. Don't follow me, and we won't have problems.",   "valence": -0.85 } ```

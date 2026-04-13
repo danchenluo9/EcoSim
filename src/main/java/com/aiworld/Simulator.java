@@ -3,6 +3,9 @@ package com.aiworld;
 import com.aiworld.core.World;
 import com.aiworld.core.WorldLoop;
 import com.aiworld.llm.ClaudeClient;
+import com.aiworld.llm.LLMClient;
+import com.aiworld.llm.PlaybackLLMClient;
+import com.aiworld.llm.RecordingLLMClient;
 import com.aiworld.model.Location;
 import com.aiworld.model.Resource;
 import com.aiworld.npc.NPC;
@@ -32,6 +35,24 @@ public class Simulator {
     private static int  envInt (String name, int  def) { String v = System.getenv(name); return v != null ? Integer.parseInt(v)  : def; }
     private static long envLong(String name, long def) { String v = System.getenv(name); return v != null ? Long.parseLong(v)    : def; }
 
+    /**
+     * Creates the LLM client for an NPC based on ECOSIM_LLM_MODE:
+     *   (unset)  — live Claude API
+     *   record   — live Claude API + saves responses to mock-data/
+     *   playback — replays responses from mock-data/, no API calls
+     */
+    private static LLMClient createLLMClient(String npcName) {
+        String mode = System.getenv("ECOSIM_LLM_MODE");
+        if ("playback".equalsIgnoreCase(mode)) {
+            return new PlaybackLLMClient(npcName, "mock-data");
+        }
+        ClaudeClient live = ClaudeClient.fromEnv();
+        if ("record".equalsIgnoreCase(mode)) {
+            return new RecordingLLMClient(live, npcName, "mock-data");
+        }
+        return live;
+    }
+
     public static void main(String[] args) throws Exception {
 
         log.info("╔══════════════════════════════════╗");
@@ -55,11 +76,11 @@ public class Simulator {
         // ── 3. Spawn NPCs ────────────────────────────────────────────
         // Each NPC gets its own LLM client so circuit-breaker faults are isolated
         // per-NPC rather than blocking all LLM calls when one NPC's prompt fails.
-        NPC alice = new NPC("Alice", new Location(2,  2));  alice.setLLMClient(ClaudeClient.fromEnv());
-        NPC bob   = new NPC("Bob",   new Location(14, 4));  bob.setLLMClient(ClaudeClient.fromEnv());
-        NPC carol = new NPC("Carol", new Location(9,  14)); carol.setLLMClient(ClaudeClient.fromEnv());
-        NPC dave  = new NPC("Dave",  new Location(5,  10)); dave.setLLMClient(ClaudeClient.fromEnv());
-        NPC eve   = new NPC("Eve",   new Location(18, 18)); eve.setLLMClient(ClaudeClient.fromEnv());
+        NPC alice = new NPC("Alice", new Location(2,  2));  alice.setLLMClient(createLLMClient("Alice"));
+        NPC bob   = new NPC("Bob",   new Location(14, 4));  bob.setLLMClient(createLLMClient("Bob"));
+        NPC carol = new NPC("Carol", new Location(9,  14)); carol.setLLMClient(createLLMClient("Carol"));
+        NPC dave  = new NPC("Dave",  new Location(5,  10)); dave.setLLMClient(createLLMClient("Dave"));
+        NPC eve   = new NPC("Eve",   new Location(18, 18)); eve.setLLMClient(createLLMClient("Eve"));
 
         world.addNPC(alice);
         world.addNPC(bob);

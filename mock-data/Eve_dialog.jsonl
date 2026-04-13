@@ -1,0 +1,6 @@
+```json {   "speaker_line": "Spotted some tracks heading northeast. Want to scout together?",   "listener_line": "Sure, could use a break from wandering alone anyway.",   "valence": 0.6 } ```
+```json {   "speaker_line": "Found some berries near the creek bed. Should be enough for both of us.",   "listener_line": "Thanks. My legs are getting heavy—glad we're not far from camp.",   "valence": 0.65 } ```
+```json {   "speaker_line": "We should pool what we find. Together we'll survive better than alone.",   "listener_line": "Agreed. I'm heading to that berry patch Carol mentioned—want to help secure it?",   "valence": 0.65 } ```
+```json {   "speaker_line": "The berry patch won't wait. We should move now before anyone else finds it.",   "listener_line": "You're right. Let's grab what we can and head back to fortify camp together.",   "valence": 0.72 } ```
+```json {   "speaker_line": "I'm done helping you. Find the berries yourself.",   "listener_line": "Fine. Your loss when winter comes and you're alone.",   "valence": -0.85 } ```
+```json {   "speaker_line": "You took everything and left me to rot. I'm taking it back.",   "listener_line": "Stay back, Eve. You're in no shape for this—just let me pass.",   "valence": -0.95 } ```

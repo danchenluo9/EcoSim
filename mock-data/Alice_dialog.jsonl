@@ -1,0 +1,9 @@
+```json {   "speaker_line": "I found a berry patch downstream. Might be worth checking out together.",   "listener_line": "I could use the help. My legs are killing me—been searching all morning.",   "valence": 0.65 } ```
+```json {   "speaker_line": "Those berries won't wait forever. We should head out before Carol gets ideas.",   "listener_line": "Agreed. I'm tired, but a full belly beats rest anyway.",   "valence": 0.72 } ```
+```json {   "speaker_line": "We're wasting time talking. Carol could find those berries any moment.",   "listener_line": "You're right. Let's go now before we lose the light—and the patch.",   "valence": 0.35 } ```
+```json {   "speaker_line": "Stay back. I need to rest and I won't be cornered again.",   "listener_line": "You brought this on yourself. Time to answer for what you've done.",   "valence": -0.95 } ```
+```json {   "speaker_line": "I'm leaving. Don't follow me, or this ends badly for both of us.",   "listener_line": "Run then. But you can't hide forever, Alice.",   "valence": -0.95 } ```
+```json {   "speaker_line": "I need to find shelter and rest. See you around, Dave.",   "listener_line": "Fair enough. Watch yourself out there.",   "valence": 0.15 } ```
+```json {   "speaker_line": "I'm finding somewhere to collapse. Don't follow me this time.",   "listener_line": "Suit yourself. Just don't stumble into trouble you can't handle.",   "valence": -0.35 } ```
+```json {   "speaker_line": "Stay back. I mean it this time, Dave.",   "listener_line": "Fine. But you're making a mistake out here alone.",   "valence": -0.85 } ```
+```json {   "speaker_line": "I'm leaving now. Don't follow me, or we're done talking forever.",   "listener_line": "You took what's mine. Running won't change that, Alice.",   "valence": -0.95 } ```

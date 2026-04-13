@@ -1,6 +1,8 @@
 #!/bin/bash
 # EcoSim launcher — starts the Java backend and Vite frontend together.
-# Usage: ./start.sh
+# Usage:
+#   ./start.sh      — playback mode (no API calls, uses mock-data/)
+#   ./start.sh 1    — record mode (calls real API and saves responses to mock-data/)
 
 set -e
 cd "$(dirname "$0")"
@@ -10,6 +12,15 @@ if [ -f .env ]; then
     set -a
     . ./.env
     set +a
+fi
+
+# LLM mode: record when called with argument 1, otherwise playback.
+if [ "${1}" = "1" ]; then
+    export ECOSIM_LLM_MODE=record
+    echo "▶ LLM mode: record (responses will be saved to mock-data/)"
+else
+    export ECOSIM_LLM_MODE=playback
+    echo "▶ LLM mode: playback (using saved responses from mock-data/)"
 fi
 
 cleanup() {
