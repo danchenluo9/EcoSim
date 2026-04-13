@@ -27,12 +27,14 @@ public interface Goal {
     double computeUrgency(NPCState state);
 
     /**
-     * Called each tick to allow the goal to update its internal weight
-     * (e.g., SocialGoal becomes more urgent if the NPC has been alone
-     * for many ticks).
+     * Called each tick to update any internal state this goal tracks
+     * (e.g., SocialGoal increments a loneliness counter; ExploreGoal
+     * increments a boredom counter). Most goals are stateless and leave
+     * this as a no-op.
+     *
+     * Renamed from {@code updateWeight} — "weight" implied the goal's
+     * personality weight changes dynamically, but it is final in every
+     * implementation. This is purely a per-tick state hook.
      */
-    void updateWeight(NPCState state, long currentTick);
-
-    /** Returns the goal's current base weight (before urgency scaling). */
-    double getWeight();
+    void onTick(NPCState state, long currentTick);
 }

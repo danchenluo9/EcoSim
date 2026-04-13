@@ -5,7 +5,7 @@ import com.aiworld.model.MemoryEvent;
 import com.aiworld.npc.AbstractNPC;
 import com.aiworld.npc.NPCState;
 
-import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
@@ -37,10 +37,12 @@ public class LLMPromptBuilder {
         StringBuilder sb = new StringBuilder(1024);
 
         // ── Header ────────────────────────────────────────────────────
-        sb.append("You are advising an NPC agent in a survival simulation.\n");
-        sb.append("Your job is to choose a HIGH-LEVEL STRATEGY — NOT individual actions.\n");
-        sb.append("The NPC's rule-based engine handles moment-to-moment decisions (Move/Gather/Rest/Interact).\n");
-        sb.append("A strategy biases those decisions over the next 30-60 ticks.\n\n");
+        sb.append("You ARE ").append(npc.getId())
+          .append(", an agent in a competitive survival world.\n");
+        sb.append("Think only of your own survival, resources, and standing.\n");
+        sb.append("Choose a HIGH-LEVEL STRATEGY that reflects what YOU would do — not what is safest in general.\n");
+        sb.append("Your rule-based instincts handle moment-to-moment actions (Move/Gather/Rest/Interact/Attack).\n");
+        sb.append("This strategy biases those instincts for the next 30-60 ticks.\n\n");
 
         // ── NPC status ────────────────────────────────────────────────
         sb.append("=== NPC Status ===\n");
@@ -54,10 +56,12 @@ public class LLMPromptBuilder {
         sb.append("\n");
 
         // ── Goal urgencies ────────────────────────────────────────────
+        // Driven from the live GoalSystem — automatically includes AggressionGoal
+        // for Fighter, and any future goals without requiring changes here.
         sb.append("=== Goal Urgencies (0.0 = calm, 1.0 = critical) ===\n");
-        sb.append(String.format("Survival: %.2f%n", npc.getGoalSystem().getUrgency("Survival", state)));
-        sb.append(String.format("Explore:  %.2f%n", npc.getGoalSystem().getUrgency("Explore",  state)));
-        sb.append(String.format("Social:   %.2f%n", npc.getGoalSystem().getUrgency("Social",   state)));
+        npc.getGoalSystem().getGoals().forEach(g ->
+            sb.append(String.format("  %-14s %.2f%n",
+                g.getName() + ":", g.computeUrgency(state))));
         sb.append("\n");
 
         // ── Recent memory ─────────────────────────────────────────────
@@ -66,10 +70,14 @@ public class LLMPromptBuilder {
         if (allEvents.isEmpty()) {
             sb.append("No notable events recorded yet.\n");
         } else {
-            List<MemoryEvent> eventList = new ArrayList<>(allEvents);
-            int start = Math.max(0, eventList.size() - MAX_MEMORY_EVENTS);
-            for (int i = start; i < eventList.size(); i++) {
-                MemoryEvent e = eventList.get(i);
+            // Collect last N events without copying the whole deque
+            ArrayDeque<MemoryEvent> recent = new ArrayDeque<>(MAX_MEMORY_EVENTS);
+            java.util.Iterator<MemoryEvent> descIt = allEvents.descendingIterator();
+            int collected = 0;
+            while (descIt.hasNext() && collected++ < MAX_MEMORY_EVENTS) {
+                recent.addFirst(descIt.next());
+            }
+            for (MemoryEvent e : recent) {
                 sb.append(String.format("  [tick %d] %s — %s%n",
                     e.getTick(), e.getType(), e.getDescription()));
             }
@@ -78,19 +86,46 @@ public class LLMPromptBuilder {
 
         // ── Nearby NPCs ───────────────────────────────────────────────
         sb.append("=== Nearby NPCs (radius 3) ===\n");
-        List<AbstractNPC> nearby = world.getNPCsNear(state.getLocation(), 3);
-        nearby.removeIf(other -> other.getId().equals(npc.getId()));
+        List<AbstractNPC> nearby = world.getNPCsNear(npc, 3);
         if (nearby.isEmpty()) {
             sb.append("None.\n");
         } else {
             for (AbstractNPC other : nearby) {
-                double trust = npc.getMemory()
-                    .getImpression(other.getId())
-                    .map(imp -> imp.getTrust())
-                    .orElse(0.5);
+                double trust     = npc.getMemory().getImpression(other.getId())
+                                      .map(imp -> imp.getTrust()).orElse(0.5);
+                double hostility = npc.getMemory().getImpression(other.getId())
+                                      .map(imp -> imp.getHostility()).orElse(0.0);
                 int dist = other.getState().getLocation().distanceTo(state.getLocation());
-                sb.append(String.format("  %s (trust: %.2f, distance: %d)%n",
-                    other.getId(), trust, dist));
+
+                // Count past attacks and robberies to give Claude relationship context.
+                // Both are sourced from memory events, so counts reflect only what the
+                // NPC can still remember (last 50 events — old incidents may be forgotten).
+                String otherId = other.getId();
+                long timesAttackedByThem = npc.getMemory()
+                    .getEventsOfType(MemoryEvent.EventType.WAS_ATTACKED).stream()
+                    .filter(e -> otherId.equals(e.getTargetId())).count();
+                long timesAttackedThem = npc.getMemory()
+                    .getEventsOfType(MemoryEvent.EventType.ATTACKED_NPC).stream()
+                    .filter(e -> otherId.equals(e.getTargetId())).count();
+                long timesRobbedByThem = npc.getMemory()
+                    .getEventsOfType(MemoryEvent.EventType.WAS_ROBBED).stream()
+                    .filter(e -> otherId.equals(e.getTargetId())).count();
+                long timesRobbedThem = npc.getMemory()
+                    .getEventsOfType(MemoryEvent.EventType.STOLE_FOOD).stream()
+                    .filter(e -> otherId.equals(e.getTargetId())).count();
+
+                sb.append(String.format(
+                    "  %s — trust: %.2f, hostility: %.2f, distance: %d",
+                    other.getId(), trust, hostility, dist));
+                if (timesAttackedByThem > 0)
+                    sb.append(String.format(", attacked you %d time(s)", timesAttackedByThem));
+                if (timesAttackedThem > 0)
+                    sb.append(String.format(", you attacked them %d time(s)", timesAttackedThem));
+                if (timesRobbedByThem > 0)
+                    sb.append(String.format(", stole food from you %d time(s)", timesRobbedByThem));
+                if (timesRobbedThem > 0)
+                    sb.append(String.format(", you stole food from them %d time(s)", timesRobbedThem));
+                sb.append("\n");
             }
         }
         sb.append("\n");
@@ -107,22 +142,22 @@ public class LLMPromptBuilder {
         }
 
         // ── Available strategies ──────────────────────────────────────
-        sb.append("=== Available Strategies ===\n");
-        sb.append("  GATHER_FOOD     - prioritise collecting food resources\n");
-        sb.append("  SEEK_ALLIES     - move toward and interact with trusted NPCs\n");
-        sb.append("  EXPLORE         - roam to discover resources and territory\n");
-        sb.append("  AVOID_CONFLICT  - avoid hostile NPCs, minimise interaction\n");
-        sb.append("  CONSERVE_ENERGY - rest and reduce movement to save energy\n");
-        sb.append("  SURVIVE         - emergency mode: food and rest above all else\n");
+        sb.append("=== Your Strategic Options ===\n");
+        sb.append("  GATHER_FOOD     - focus on securing food before others take it\n");
+        sb.append("  SEEK_ALLIES     - find and strengthen bonds with trusted NPCs\n");
+        sb.append("  EXPLORE         - roam to discover unclaimed resources and territory\n");
+        sb.append("  AVOID_CONFLICT  - stay away from danger when you are too weak to fight\n");
+        sb.append("  CONSERVE_ENERGY - rest and recover before your next move\n");
+        sb.append("  SURVIVE         - emergency: food and rest above everything else\n");
+        sb.append("  RETALIATE       - hunt down whoever attacked you and make them pay\n");
         sb.append("\n");
 
         // ── Output format ─────────────────────────────────────────────
-        sb.append("Choose the best strategy for the next 30-60 ticks.\n");
+        sb.append("What do YOU do next? Choose the strategy that matches your situation and character.\n");
         sb.append("Respond ONLY with this JSON (no extra text, no markdown):\n");
         sb.append("{\n");
         sb.append("  \"strategy\": \"<one of the strategy names above>\",\n");
         sb.append("  \"intent\":   \"<what the NPC should achieve in one sentence>\",\n");
-        sb.append("  \"target\":   \"<optional NPC id or zone to focus on, or empty string>\",\n");
         sb.append("  \"reason\":   \"<brief explanation of why this strategy fits the current situation>\"\n");
         sb.append("}");
 

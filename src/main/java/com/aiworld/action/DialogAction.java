@@ -2,186 +2,89 @@ package com.aiworld.action;
 
 import com.aiworld.core.World;
 import com.aiworld.dialog.DialogPromptBuilder;
-import com.aiworld.dialog.DialogSession;
-import com.aiworld.goal.SocialGoal;
-import com.aiworld.llm.LLMClient;
-import com.aiworld.model.MemoryEvent;
 import com.aiworld.npc.AbstractNPC;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.Comparator;
 import java.util.List;
 
 /**
- * DialogAction — NPC initiates an LLM-generated conversation with a nearby NPC.
+ * DialogAction — decides whether and with whom an NPC should converse.
  *
- * Dialog is purely social: no resources change hands, but the conversation
- * affects trust and is recorded in both NPCs' memory for future context.
+ * Execution is split into three phases (see {@link DialogTask}) so the
+ * LLM HTTP call never blocks the world lock:
  *
- * Cooldown: enforced via HAD_CONVERSATION memory events — an NPC won't
- * start a new dialog within {@value #DIALOG_COOLDOWN_TICKS} ticks of the last one.
+ *  1. {@link #prepare(AbstractNPC, World)} — this class.  Checks all gates,
+ *     picks the best listener, builds the prompt snapshot.
+ *  2. {@link DialogTask#executeCall()}     — HTTP call outside the lock.
+ *  3. {@link DialogTask#applyResult(World)} — re-applies results under lock.
  *
- * Invoked as a secondary action from AbstractNPC.update() via {@link #tryExecute}
- * after the main action runs, so NPCs can converse and act in the same tick.
+ * Cooldown: global — an NPC won't start ANY new dialog within
+ * {@value #DIALOG_COOLDOWN_TICKS} ticks of their last one, regardless of partner.
+ * The global guard is tracked via {@link #lastDialogTick} in O(1)
+ * rather than scanning memory events.
+ *
+ * Dialog is independent of strategy — any NPC with an LLM client can converse
+ * regardless of their current strategic state.
  */
-public class DialogAction implements Action {
+public class DialogAction {
 
-    private static final int    DIALOG_RADIUS         = 2;
-    private static final int    DIALOG_COOLDOWN_TICKS = 15;
-    private static final double TRUST_SCALE           = 0.08;
+    private static final Logger log = LoggerFactory.getLogger(DialogAction.class);
 
-    @Override
-    public String getName() { return "Dialog"; }
+    private static final int DIALOG_RADIUS         = 2;
+    private static final int DIALOG_COOLDOWN_TICKS = 15;
 
-    @Override
-    public boolean canExecute(AbstractNPC npc, World world) {
-        if (npc.getLLMClient() == null) return false;
+    /** Tick of the most recent dialog this NPC initiated. -COOLDOWN means "never talked". */
+    private long lastDialogTick = -DIALOG_COOLDOWN_TICKS;
 
-        // Cooldown: skip if a conversation happened recently
-        boolean recentlyTalked = npc.getMemory()
-            .getEventsOfType(MemoryEvent.EventType.HAD_CONVERSATION)
-            .stream()
-            .anyMatch(e -> world.getCurrentTick() - e.getTick() < DIALOG_COOLDOWN_TICKS);
-        if (recentlyTalked) return false;
+    /**
+     * Phase 1 — run inside the synchronized world tick.
+     *
+     * Checks all preconditions, selects the most-trusted nearby listener,
+     * and builds the LLM prompt from the current world snapshot.
+     *
+     * @return a ready-to-execute {@link DialogTask}, or {@code null} if dialog
+     *         should not happen this tick.
+     */
+    public DialogTask prepare(AbstractNPC npc, World world) {
+        if (npc.getLLMClient() == null) return null;
 
-        List<AbstractNPC> nearby = world.getNPCsNear(npc.getState().getLocation(), DIALOG_RADIUS);
-        nearby.remove(npc);
-        return !nearby.isEmpty();
-    }
+        // Global cooldown: O(1) field check instead of scanning memory events
+        if (world.getCurrentTick() - lastDialogTick < DIALOG_COOLDOWN_TICKS) return null;
 
-    @Override
-    public void execute(AbstractNPC speaker, World world) {
-        List<AbstractNPC> nearby = world.getNPCsNear(
-            speaker.getState().getLocation(), DIALOG_RADIUS);
-        nearby.remove(speaker);
-        if (nearby.isEmpty()) return;
+        List<AbstractNPC> nearby = world.getNPCsNear(npc, DIALOG_RADIUS);
+        if (nearby.isEmpty()) return null;
 
-        AbstractNPC listener = nearby.get(0);
-        LLMClient   client   = speaker.getLLMClient();
-        if (client == null) return;
+        // Prefer the most-trusted nearby NPC; strangers default to 0.5 (benefit of the doubt).
+        // Secondary sort by ID breaks ties deterministically without insertion-order bias.
+        AbstractNPC listener = nearby.stream()
+            .max(Comparator.comparingDouble((AbstractNPC other) ->
+                    npc.getMemory().getImpression(other.getId())
+                        .map(imp -> imp.getTrust())
+                        .orElse(0.5))
+                .thenComparing(AbstractNPC::getId))
+            .orElse(null);
+        if (listener == null) return null;
 
-        String prompt   = DialogPromptBuilder.build(speaker, listener, world);
-        String rawText  = client.callRaw(prompt);
-        String[] parsed = parseDialogJson(rawText);
-
-        if (parsed == null) {
-            System.out.printf("[%s] Dialog LLM call failed — skipping%n", speaker.getId());
-            return;
-        }
-
-        String speakerLine  = parsed[0];
-        String listenerLine = parsed[1];
-        double valence      = Double.parseDouble(parsed[2]);
-
-        // ── Print the conversation ────────────────────────────────────
-        System.out.println();
-        System.out.printf("  [%s -> %s]%n", speaker.getId(), listener.getId());
-        System.out.printf("  %s: \"%s\"%n", speaker.getId(),  speakerLine);
-        System.out.printf("  %s: \"%s\"%n", listener.getId(), listenerLine);
-        System.out.println();
-
-        // ── Update trust based on conversation tone ───────────────────
-        double delta = valence * TRUST_SCALE;
-        if (delta > 0) {
-            speaker.getMemory().recordPositiveInteraction(listener.getId(), delta);
-            listener.getMemory().recordPositiveInteraction(speaker.getId(), delta);
-        } else if (delta < 0) {
-            double absDelta = Math.abs(delta);
-            speaker.getMemory().recordNegativeInteraction(listener.getId(), absDelta);
-            listener.getMemory().recordNegativeInteraction(speaker.getId(), absDelta);
-        }
-
-        // ── Record memory events ──────────────────────────────────────
-        long tick = world.getCurrentTick();
-        speaker.getMemory().addEvent(new MemoryEvent(tick,
-            MemoryEvent.EventType.HAD_CONVERSATION,
-            "Talked with " + listener.getId() + ": \"" + speakerLine + "\"",
-            speaker.getState().getLocation(), valence));
-
-        listener.getMemory().addEvent(new MemoryEvent(tick,
-            MemoryEvent.EventType.HAD_CONVERSATION,
-            "Talked with " + speaker.getId() + ": \"" + listenerLine + "\"",
-            listener.getState().getLocation(), valence));
-
-        // ── Store in conversation logs ────────────────────────────────
-        DialogSession session = new DialogSession(
-            tick, speaker.getId(), listener.getId(),
-            speakerLine, listenerLine, valence);
-        speaker.getMemory().addConversation(session);
-        listener.getMemory().addConversation(session);
-
-        // ── Reset loneliness counter — talking counts as social interaction ──
-        speaker.getGoalSystem().getGoalByType(SocialGoal.class).ifPresent(SocialGoal::onInteracted);
-        listener.getGoalSystem().getGoalByType(SocialGoal.class).ifPresent(SocialGoal::onInteracted);
+        // Save previous tick BEFORE overwriting — DialogTask will revert it
+        // if the HTTP call fails, so the speaker's cooldown is not consumed on failure.
+        long previousLastDialogTick = lastDialogTick;
+        lastDialogTick = world.getCurrentTick();
+        String prompt = DialogPromptBuilder.build(npc, listener, world);
+        log.debug("[{}] Prepared dialog task with [{}]", npc.getId(), listener.getId());
+        return new DialogTask(npc, listener, prompt, npc.getLLMClient(), previousLastDialogTick);
     }
 
     /**
-     * Secondary-action entry point: runs dialog only if conditions allow.
-     * Called directly from AbstractNPC.update() after the main action.
+     * Marks this NPC as having participated in a dialog at the given tick.
+     * Called on the LISTENER by {@link DialogTask#applyResult} so that both
+     * speaker and listener share the same global cooldown after a conversation.
+     * Also used to REVERT the speaker's cooldown when an HTTP call fails — pass
+     * the pre-Phase-1 tick value to undo the cooldown consumed in prepare().
      */
-    public void tryExecute(AbstractNPC npc, World world) {
-        if (canExecute(npc, world)) {
-            execute(npc, world);
-        }
+    public void markCompleted(long tick) {
+        lastDialogTick = tick;
     }
 
-    @Override
-    public double estimatedUtility(AbstractNPC npc, World world) {
-        return npc.getGoalSystem().getUrgency("Social", npc.getState()) * 0.85;
-    }
-
-    // ── Private helpers ───────────────────────────────────────────────
-
-    /**
-     * Parses {"speaker_line":"...","listener_line":"...","valence":0.3}
-     * Returns [speakerLine, listenerLine, valenceStr] or null on failure.
-     */
-    private String[] parseDialogJson(String text) {
-        if (text == null || text.isBlank()) return null;
-
-        String speakerLine  = extractField(text, "speaker_line");
-        String listenerLine = extractField(text, "listener_line");
-        String valenceStr   = extractNumber(text, "valence");
-
-        if (speakerLine == null || listenerLine == null) return null;
-
-        double valence;
-        try {
-            valence = valenceStr != null ? Double.parseDouble(valenceStr) : 0.0;
-            valence = Math.max(-1.0, Math.min(1.0, valence));
-        } catch (NumberFormatException e) {
-            valence = 0.0;
-        }
-
-        return new String[]{ speakerLine, listenerLine, String.valueOf(valence) };
-    }
-
-    private String extractField(String json, String key) {
-        String marker = "\"" + key + "\"";
-        int keyIdx = json.indexOf(marker);
-        if (keyIdx == -1) return null;
-        int colonIdx = json.indexOf(':', keyIdx + marker.length());
-        if (colonIdx == -1) return null;
-        int quoteStart = json.indexOf('"', colonIdx + 1);
-        if (quoteStart == -1) return null;
-        int quoteEnd = quoteStart + 1;
-        while (quoteEnd < json.length()) {
-            if (json.charAt(quoteEnd) == '"' && json.charAt(quoteEnd - 1) != '\\') break;
-            quoteEnd++;
-        }
-        if (quoteEnd >= json.length()) return null;
-        return json.substring(quoteStart + 1, quoteEnd).replace("\\\"", "\"");
-    }
-
-    private String extractNumber(String json, String key) {
-        String marker = "\"" + key + "\"";
-        int keyIdx = json.indexOf(marker);
-        if (keyIdx == -1) return null;
-        int colonIdx = json.indexOf(':', keyIdx + marker.length());
-        if (colonIdx == -1) return null;
-        int start = colonIdx + 1;
-        while (start < json.length() && json.charAt(start) == ' ') start++;
-        int end = start;
-        while (end < json.length() && "0123456789.-".indexOf(json.charAt(end)) >= 0) end++;
-        if (end == start) return null;
-        return json.substring(start, end);
-    }
 }

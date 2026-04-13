@@ -1,10 +1,19 @@
 package com.aiworld.npc;
 
+import com.aiworld.action.DialogAction;
+import com.aiworld.action.DialogTask;
 import com.aiworld.core.World;
 import com.aiworld.decision.DecisionEngine;
-import com.aiworld.action.DialogAction;
 import com.aiworld.llm.LLMClient;
 import com.aiworld.llm.StrategyManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.List;
 
 /**
  * AbstractNPC is the base class for all NPC agents in the simulation.
@@ -23,9 +32,11 @@ import com.aiworld.llm.StrategyManager;
  */
 public abstract class AbstractNPC {
 
+    private static final Logger log = LoggerFactory.getLogger(AbstractNPC.class);
+
     protected final String         id;
     protected final NPCState       state;
-    protected final GoalSystem     goalSystem;
+    protected       GoalSystem     goalSystem;  // mutable: reconfigureGoals() may replace it pre-start
     protected final Memory         memory;
     protected final DecisionEngine decisionEngine;
 
@@ -36,6 +47,10 @@ public abstract class AbstractNPC {
 
     /** Optional LLM strategic layer. Null until {@link #setLLMClient} is called. */
     private StrategyManager strategyManager;
+
+    /** Rolling log of the last 20 actions taken, with tick numbers. */
+    private final Deque<String> actionLog = new ArrayDeque<>();
+    private static final int MAX_ACTION_LOG = 20;
 
     protected AbstractNPC(String id, NPCState state,
                           GoalSystem goalSystem, Memory memory) {
@@ -51,43 +66,70 @@ public abstract class AbstractNPC {
      *
      * Sequence:
      *  1. Passive state effects (metabolism, aging)
-     *  2. Goal weight updates
+     *  2. Goal per-tick state update (loneliness/boredom counters)
      *  3. LLM strategic planning (if LLM client is set — skipped otherwise)
      *  4. Pre-update hook (subclass perception/communication)
      *  5. Decision engine selects and executes action (always runs)
-     *  6. Dialog (secondary action — only if LLM client is set and conditions allow)
-     *  7. Memory maintenance (impression decay)
-     *  8. Post-update hook
+     *  6. Memory maintenance (impression decay)
+     *  7. Post-update hook
+     *
+     * Note: dialog is no longer triggered here. {@link World#tick()} calls
+     * {@link #prepareDialogTask(World)} after all NPC updates, runs the HTTP
+     * calls outside the world lock, then applies results in a second pass.
+     * This prevents LLM I/O from blocking the world lock for 20 seconds.
      */
     public final void update(World world) {
         if (state.isDead()) return;
 
         state.passiveTick();                                  // 1. metabolism
-        goalSystem.updateAll(state, world.getCurrentTick());  // 2. goal updates
+        if (state.isDead()) {
+            log.info("[{}] has died from starvation at tick {}", id, world.getCurrentTick());
+            // Cancel any in-flight LLM strategy call — avoids wasting API quota
+            // and writing a new strategy to a dead NPC's state.
+            if (strategyManager != null) strategyManager.cancelPendingCall();
+            return;
+        }
+        goalSystem.tickAll(state, world.getCurrentTick());    // 2. goal tick
         if (strategyManager != null) {
             strategyManager.tick(this, world);                // 3. LLM strategy layer
         }
         onPreUpdate(world);                                   // 4. perception hook
         decisionEngine.decide(this, world);                   // 5. act
-        if (llmClient != null) {
-            dialogAction.tryExecute(this, world);             // 6. secondary dialog
-        }
-        memory.decayImpressions();                            // 7. social drift
-        onPostUpdate(world);                                  // 8. logging hook
+        memory.decayImpressions();                            // 6. social drift
+        onPostUpdate(world);                                  // 7. logging hook
     }
 
     /**
-     * Attaches an LLM client to this NPC, enabling strategic planning.
-     * Can be called at any time (including mid-simulation).
+     * Phase 1 of the dialog pipeline — called by {@link World#tick()} inside
+     * the synchronized block after all NPC updates are complete.
      *
-     * <pre>
-     *   npc.setLLMClient(new MockLLMClient());          // for testing
-     *   npc.setLLMClient(ClaudeClient.fromEnv());       // live API
-     * </pre>
+     * Checks dialog preconditions and builds the LLM prompt from the current
+     * world snapshot. Returns a {@link DialogTask} ready for HTTP execution,
+     * or {@code null} if dialog should not happen this tick.
+     */
+    public DialogTask prepareDialogTask(World world) {
+        if (llmClient == null) return null;
+        if (state.isDead()) return null;   // NPC may have died from starvation this tick
+        return dialogAction.prepare(this, world);
+    }
+
+    /**
+     * Called on the listener NPC by {@link com.aiworld.action.DialogTask#applyResult}
+     * so the listener's dialog cooldown is updated after participating in a conversation.
+     */
+    public void markDialogCompleted(long tick) {
+        dialogAction.markCompleted(tick);
+    }
+
+    /**
+     * Attaches an LLM client to this NPC, enabling strategic planning and dialog.
+     * Shuts down any existing StrategyManager executor before replacing it to
+     * prevent thread leaks when this method is called more than once.
      */
     public void setLLMClient(LLMClient client) {
+        if (this.strategyManager != null) this.strategyManager.shutdown();
         this.llmClient       = client;
-        this.strategyManager = new StrategyManager(client);
+        this.strategyManager = new StrategyManager(client, this.id);
     }
 
     /**
@@ -107,6 +149,17 @@ public abstract class AbstractNPC {
     public abstract String getArchetype();
 
     // ── Accessors ────────────────────────────────────────────────────
+
+    /** Records an action taken this tick into the rolling action log. */
+    public void recordAction(long tick, String actionName) {
+        if (actionLog.size() >= MAX_ACTION_LOG) actionLog.pollFirst();
+        actionLog.addLast("[T" + tick + "] " + actionName);
+    }
+
+    /** Returns the action log as an ordered list (oldest first). */
+    public List<String> getActionLog() {
+        return Collections.unmodifiableList(new ArrayList<>(actionLog));
+    }
 
     public String          getId()              { return id; }
     public NPCState        getState()           { return state; }

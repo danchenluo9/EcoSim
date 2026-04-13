@@ -11,7 +11,7 @@ import com.aiworld.npc.NPCState;
  */
 public class SocialGoal implements Goal {
 
-    private double weight;
+    private final double weight;
     private long   ticksSinceLastInteraction;
     private static final long LONELINESS_THRESHOLD = 20;
 
@@ -34,7 +34,7 @@ public class SocialGoal implements Goal {
     }
 
     @Override
-    public void updateWeight(NPCState state, long currentTick) {
+    public void onTick(NPCState state, long currentTick) {
         ticksSinceLastInteraction++;
     }
 
@@ -43,6 +43,4 @@ public class SocialGoal implements Goal {
         ticksSinceLastInteraction = 0;
     }
 
-    @Override
-    public double getWeight() { return weight; }
 }

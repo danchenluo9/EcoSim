@@ -1,0 +1,137 @@
+@startuml EcoSim Sequence Diagram
+
+skinparam sequenceMessageAlign center
+skinparam sequenceArrowThickness 1.5
+skinparam sequenceArrowColor #2d6099
+skinparam participantBackgroundColor #1e3a5f
+skinparam participantFontColor #ffffff
+skinparam participantBorderColor #2d6099
+skinparam activationBackgroundColor #d0e4f7
+skinparam activationBorderColor #2d6099
+skinparam noteBackgroundColor #fff8dc
+skinparam noteBorderColor #c8a000
+skinparam sequenceGroupBorderColor #2d6099
+skinparam sequenceGroupBackgroundColor #eaf2ff
+skinparam sequenceGroupFontColor #1e3a5f
+skinparam sequenceGroupHeaderFontColor #1e3a5f
+skinparam sequenceDividerFontColor #1e3a5f
+skinparam sequenceDividerBackgroundColor #d0e4f7
+skinparam lifelineBorderColor #2d6099
+
+title EcoSim — Simulation Tick Lifecycle
+
+participant "WorldLoop" as WL
+participant "World" as W
+participant "Resource" as R
+participant "NPC\n(AbstractNPC)" as NPC
+participant "NPCState" as ST
+participant "GoalSystem" as GS
+participant "StrategyManager" as SM
+participant "DecisionEngine" as DE
+participant "Action" as ACT
+participant "Memory" as MEM
+participant "DialogAction" as DA
+participant "DialogTask" as DT
+participant "ClaudeClient" as CC
+
+WL -> W : tick()
+activate W
+
+== Phase 1 — synchronized(world) ==
+
+loop for each Resource
+  W -> R : tick()
+  R --> W : (quantity regenerated)
+end
+
+W -> W : shuffle NPC update order
+
+loop for each NPC (shuffled)
+  W -> NPC : update(world)
+  activate NPC
+
+  NPC -> ST : passiveTick()
+  note right of ST : metabolism, aging;\ndie if food/health = 0
+  ST --> NPC
+
+  NPC -> GS : tickAll(state, tick)
+  note right of GS : loneliness / boredom\ncounters advance
+  GS --> NPC
+
+  NPC -> SM : tick(npc, world)
+  activate SM
+  note right of SM : apply completed future\nif available, then check\ntrigger conditions
+  SM -> CC : [async] llmClient.call(prompt)
+  note right of CC : dispatched to\nper-NPC llm-worker\nthread (non-blocking)
+  SM --> NPC
+  deactivate SM
+
+  NPC -> DE : decide(npc, world)
+  activate DE
+  DE -> ACT : canExecute(npc, world)
+  ACT --> DE : true/false (per candidate)
+  DE -> ACT : estimatedUtility(npc, world)
+  ACT --> DE : score
+  DE -> ACT : execute(npc, world) [highest score]
+  note right of ACT : modifies NPC/target state,\nadds MemoryEvents
+  ACT --> DE
+  DE --> NPC
+  deactivate DE
+
+  NPC -> MEM : decayImpressions()
+  MEM --> NPC
+
+  NPC --> W
+  deactivate NPC
+end
+
+loop for each NPC (same shuffled order, capped at MAX_DIALOG_TASKS_PER_TICK)
+  W -> NPC : prepareDialogTask(world)
+  activate NPC
+  NPC -> DA : prepare(npc, world)
+  activate DA
+  note right of DA : check cooldown,\npick most-trusted\nnearby listener,\nbuild LLM prompt
+  DA --> NPC : DialogTask (or null)
+  deactivate DA
+  NPC --> W : DialogTask
+  deactivate NPC
+end
+
+W -> W : removeIf(npc.isDead())\n→ move to deadNpcs
+W -> MEM : cleanImpressions(deadIds)
+
+== Phase 2 — HTTP phase (no lock held) ==
+
+note over W,CC : World lock is FREE here.\nFrontend /api/state polls are never blocked.
+
+W -> DT : [CompletableFuture.runAsync ×N\non shared dialog-worker pool]
+activate DT
+DT -> CC : callRaw(prompt)
+activate CC
+note right of CC : ~20s timeout;\ncircuit breaker\nguards repeated\nfailures
+CC --> DT : raw JSON (or null)
+deactivate CC
+DT --> DT : rawResult stored
+deactivate DT
+
+W -> W : allOf(futures).join()\n(waits for all dialog calls)
+
+== Phase 3 — synchronized(world) ==
+
+loop for each completed DialogTask
+  W -> DT : applyResult(world)
+  activate DT
+  note right of DT : guard: skip if\nspeaker or listener\ndied mid-flight
+  DT -> MEM : recordPositiveInteraction /\nrecordNegativeInteraction
+  DT -> MEM : addEvent(HAD_CONVERSATION)
+  DT -> MEM : addConversation(DialogSession)
+  DT -> NPC : markDialogCompleted(tick)
+  note right of DT : listener cooldown set;\nfailed calls revert\nspeaker cooldown
+  DT --> W
+  deactivate DT
+end
+
+W --> WL
+deactivate W
+
+@enduml

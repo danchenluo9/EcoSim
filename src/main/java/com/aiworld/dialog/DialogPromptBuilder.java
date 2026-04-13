@@ -59,29 +59,36 @@ public class DialogPromptBuilder {
         }
         sb.append("\n");
 
-        // ── Relationship ──────────────────────────────────────────────
-        double trust = speaker.getMemory()
-            .getImpression(listener.getId())
-            .map(imp -> imp.getTrust())
-            .orElse(0.5);
-        double hostility = speaker.getMemory()
-            .getImpression(listener.getId())
-            .map(imp -> imp.getHostility())
-            .orElse(0.0);
+        // ── Relationship — both sides so Claude can write each NPC's line correctly ──
+        double spTrust     = speaker.getMemory().getImpression(listener.getId())
+                                .map(imp -> imp.getTrust()).orElse(0.5);
+        double spHostility = speaker.getMemory().getImpression(listener.getId())
+                                .map(imp -> imp.getHostility()).orElse(0.0);
+        double liTrust     = listener.getMemory().getImpression(speaker.getId())
+                                .map(imp -> imp.getTrust()).orElse(0.5);
+        double liHostility = listener.getMemory().getImpression(speaker.getId())
+                                .map(imp -> imp.getHostility()).orElse(0.0);
 
-        sb.append("=== Relationship ===\n");
-        sb.append(String.format("%s's trust in %s: %.2f%n", speaker.getId(), listener.getId(), trust));
-        sb.append(String.format("%s's hostility toward %s: %.2f%n", speaker.getId(), listener.getId(), hostility));
-        sb.append(String.format("(0.0=stranger, 0.5=neutral, 1.0=%s)%n",
-            trust > 0.5 ? "close ally" : "enemy"));
+        sb.append("=== Relationship (scale: 0.0=hostile → 0.5=neutral/stranger → 1.0=close ally) ===\n");
+        sb.append(String.format("%s → %s: trust %.2f, hostility %.2f%n",
+            speaker.getId(), listener.getId(), spTrust, spHostility));
+        sb.append(String.format("%s → %s: trust %.2f, hostility %.2f%n",
+            listener.getId(), speaker.getId(), liTrust, liHostility));
         sb.append("\n");
 
         // ── Past conversations ────────────────────────────────────────
-        List<DialogSession> past = speaker.getMemory().getRecentConversations(MAX_PAST_CONVERSATIONS);
-        List<DialogSession> relevant = past.stream()
+        // Search the full stored log (up to 20 entries) before filtering to
+        // this pair — searching only the last 3 total almost always misses history
+        // when the speaker recently talked to different NPCs.
+        List<DialogSession> allRecent = speaker.getMemory().getRecentConversations(20);
+        List<DialogSession> relevant  = allRecent.stream()
             .filter(s -> s.getListenerId().equals(listener.getId())
                       || s.getSpeakerId().equals(listener.getId()))
             .toList();
+        // Keep only the most recent MAX_PAST_CONVERSATIONS of this pair
+        if (relevant.size() > MAX_PAST_CONVERSATIONS) {
+            relevant = relevant.subList(relevant.size() - MAX_PAST_CONVERSATIONS, relevant.size());
+        }
 
         if (!relevant.isEmpty()) {
             sb.append("=== Past conversations between them ===\n");

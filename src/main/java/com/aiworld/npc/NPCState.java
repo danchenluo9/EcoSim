@@ -26,12 +26,18 @@ public class NPCState {
     private Location location;
 
     public NPCState(int energy, int food, int health, Location location) {
-        this.maxEnergy = 100;
-        this.maxFood   = 100;
-        this.maxHealth = 100;
-        this.energy    = Math.min(energy, maxEnergy);
-        this.food      = Math.min(food, maxFood);
-        this.health    = Math.min(health, maxHealth);
+        this(energy, food, health, 100, 100, 100, location);
+    }
+
+    public NPCState(int energy, int food, int health,
+                    int maxEnergy, int maxFood, int maxHealth,
+                    Location location) {
+        this.maxEnergy = Math.max(1, maxEnergy);
+        this.maxFood   = Math.max(1, maxFood);
+        this.maxHealth = Math.max(1, maxHealth);
+        this.energy    = Math.min(energy, this.maxEnergy);
+        this.food      = Math.min(food, this.maxFood);
+        this.health    = Math.min(health, this.maxHealth);
         this.location  = location;
         this.age       = 0;
     }
@@ -72,6 +78,10 @@ public class NPCState {
     public int      getHealth()   { return health; }
     public int      getAge()      { return age; }
     public Location getLocation() { return location; }
+
+    public int getMaxEnergy() { return maxEnergy; }
+    public int getMaxFood()   { return maxFood; }
+    public int getMaxHealth() { return maxHealth; }
 
     // Ratio helpers (0.0–1.0) used by Goal urgency computations
     public double getEnergyRatio() { return (double) energy / maxEnergy; }

@@ -33,9 +33,35 @@ public class NPCImpression {
         interactionCount++;
     }
 
-    /** Trust decays naturally if NPCs don't interact — simulates social forgetting. */
+    /**
+     * Trust and hostility both decay naturally — simulates social forgetting.
+     *
+     * Trust decays toward 0.5 (neutral), not toward 0.0.
+     * An NPC you once knew but haven't seen in a while becomes a stranger
+     * again — not an enemy. Decaying to 0.0 would wrongly trigger competitive
+     * interactions with forgotten allies.
+     *
+     * Hostility decays toward 0.0 (no hostility) — old grudges fade completely.
+     *
+     * The effective rate is scaled down by interaction depth: NPCs who have
+     * shared many experiences have more stable relationships. A stranger
+     * (interactionCount=0) decays at the full base rate; a close ally
+     * (interactionCount=20+) decays significantly slower, reflecting that
+     * established trust is harder to erode through mere absence.
+     *
+     * Formula: effectiveRate = baseRate / (1 + log(1 + interactionCount))
+     * Example decay rates relative to base:
+     *   0 interactions  → ÷1.0 (full rate — strangers)
+     *   7 interactions  → ÷3.1
+     *   20 interactions → ÷4.0
+     *   50 interactions → ÷4.9 (diminishing returns above ~20)
+     */
     public void decayOverTime(double decayRate) {
-        trust = Math.max(0.0, trust - decayRate);
+        double effectiveRate = decayRate / (1.0 + Math.log1p(interactionCount));
+        trust     = trust > 0.5
+                  ? Math.max(0.5, trust     - effectiveRate)
+                  : Math.min(0.5, trust     + effectiveRate);
+        hostility = Math.max(0.0, hostility - effectiveRate * 0.5); // hostility fades slower
     }
 
     public String getTargetNpcId()     { return targetNpcId; }
