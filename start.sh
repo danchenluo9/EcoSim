@@ -5,6 +5,13 @@
 set -e
 cd "$(dirname "$0")"
 
+# Export variables from .env if present (KEY=VALUE lines).
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
+
 cleanup() {
     echo ""
     echo "Stopping EcoSim..."
@@ -20,7 +27,7 @@ mvn -q exec:java &
 BACKEND_PID=$!
 
 echo "▶ Starting frontend (Vite)..."
-cd frontend && npm run dev &
+cd frontend && npm i && npm run dev &
 FRONTEND_PID=$!
 cd ..
 

@@ -41,6 +41,40 @@ mvn -DskipTests package
 mvn exec:java
 ```
 
+### Using .env Environment Parameters
+
+The simulator reads settings via environment variables (`System.getenv`), including:
+
+- `ANTHROPIC_API_KEY`
+- `ECOSIM_WIDTH`
+- `ECOSIM_HEIGHT`
+- `ECOSIM_TICK_MS`
+- `ECOSIM_MAX_TICKS`
+- `ECOSIM_PORT`
+
+Example `.env`:
+
+```bash
+ANTHROPIC_API_KEY=your_key_here
+ECOSIM_WIDTH=30
+ECOSIM_HEIGHT=20
+ECOSIM_TICK_MS=250
+ECOSIM_MAX_TICKS=0
+ECOSIM_PORT=8081
+```
+
+Run with `.env` in the current shell:
+
+```bash
+set -a; source .env; set +a; mvn exec:java
+```
+
+Or use the launcher (it now auto-loads `.env` if present):
+
+```bash
+./start.sh
+```
+
 You should see a banner, then per-tick logs such as movement, gathering, cooperation, and final world state.
 
 ## Build and Run Options
