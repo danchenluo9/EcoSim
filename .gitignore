@@ -29,4 +29,5 @@ target/
 .env
 /frontend/node_modules/
 .remember/
+.superpowers/
 mock-data/
