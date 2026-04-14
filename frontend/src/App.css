@@ -74,9 +74,11 @@ body {
   transition: opacity .15s;
 }
 .btn:hover { opacity: 0.85; }
-.btn-pause  { background: #78350f; color: #fbbf24; }
-.btn-resume { background: #14532d; color: #4ade80; }
-.btn-stop   { background: #450a0a; color: #f87171; }
+.btn-pause   { background: #78350f; color: #fbbf24; }
+.btn-resume  { background: #14532d; color: #4ade80; }
+.btn-stop    { background: #450a0a; color: #f87171; }
+.btn-restart { background: transparent; color: #475569; border: 1px solid #2a2a3e; margin-left: 4px; }
+.btn-restart:hover { color: #94a3b8; border-color: #4a4a6e; opacity: 1; }
 
 /* ── Grid ────────────────────────────────────────────────────── */
 .grid-wrapper {
@@ -528,12 +530,71 @@ body {
   flex-shrink: 0;
 }
 
-.tick-slider {
+/* Custom tick scrubber */
+.tick-scrubber {
+  position: relative;
   flex: 1;
-  accent-color: #7c3aed;
+  height: 32px;       /* 10px above track + 4px track + 10px below + 8px thumb bleed */
   cursor: pointer;
-  height: 4px;
   min-width: 80px;
+}
+
+/* Horizontal track bar */
+.scrubber-track {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%; transform: translateY(-50%);
+  height: 4px;
+  background: #2a2a3e;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Filled (viewed) portion */
+.scrubber-fill {
+  height: 100%;
+  background: #3d2b6e;
+  border-radius: 2px;
+}
+
+/* Draggable thumb */
+.scrubber-thumb {
+  position: absolute;
+  top: 50%; transform: translate(-50%, -50%);
+  width: 13px; height: 13px;
+  background: #7c3aed;
+  border-radius: 50%;
+  border: 2px solid #a78bfa;
+  cursor: grab;
+  z-index: 4;
+  transition: transform .1s;
+}
+.scrubber-thumb:hover  { transform: translate(-50%, -50%) scale(1.2); }
+.scrubber-thumb:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.1); }
+
+/* Shared marker base */
+.scrubber-mark {
+  position: absolute;
+  transform: translateX(-50%);
+  width: 7px; height: 7px;
+  z-index: 3;
+  cursor: pointer;
+  transition: filter .12s;
+}
+.scrubber-mark:hover { filter: brightness(1.5); }
+
+/* Dialog mark: upward triangle, above the track */
+.scrubber-mark-dialog {
+  bottom: calc(50% + 5px);   /* sits just above track top */
+  background: #a78bfa;
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+
+/* Conflict mark: downward triangle, below the track */
+.scrubber-mark-conflict {
+  top: calc(50% + 5px);      /* sits just below track bottom */
+  background: #f87171;
+  clip-path: polygon(0% 0%, 100% 0%, 50% 100%);
 }
 
 .scrubber-end {

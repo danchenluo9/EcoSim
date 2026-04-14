@@ -3,9 +3,13 @@ import WorldGrid from './components/WorldGrid.jsx'
 import NPCPanel from './components/NPCPanel.jsx'
 import ControlBar from './components/ControlBar.jsx'
 import SetupScreen from './components/SetupScreen.jsx'
+import TickScrubber from './components/TickScrubber.jsx'
 
-const POLL_INTERVAL_MS = 500
-const MAX_HISTORY      = 300   // max tick snapshots kept in memory
+const POLL_INTERVAL_MS      = 500
+const MAX_HISTORY           = 300   // max tick snapshots kept in memory
+const CACHE_KEY             = 'ecosim-cache'
+const MAX_CACHE_SNAPSHOTS   = 60    // snapshots persisted to localStorage
+const CACHE_SAVE_INTERVAL   = 10    // save every N new ticks
 
 // ── Dialog strip ──────────────────────────────────────────────────
 function DialogStrip({ dialogs, displayNames }) {
@@ -38,13 +42,15 @@ export default function App() {
   const [state, setState]           = useState(null)
   const [selectedNPC, setSelectedNPC] = useState(null)
   const [error, setError]           = useState(null)
-  const fetchingRef  = useRef(false)
-  const prevStateRef = useRef(null)   // for reset detection (set by useEffect)
-  const prevDataRef  = useRef(null)   // for dialog diffing (set inside fetchState)
+  const fetchingRef    = useRef(false)
+  const prevStateRef   = useRef(null)   // for reset detection (set by useEffect)
+  const prevDataRef    = useRef(null)   // for dialog/conflict diffing
+  const lastSavedTick  = useRef(-Infinity)
 
   // ── Tick history ──────────────────────────────────────────────
-  const historyRef     = useRef(new Map())  // tick → raw state snapshot
-  const tickDialogsRef = useRef(new Map())  // tick → dialog[]
+  const historyRef       = useRef(new Map())  // tick → raw state snapshot
+  const tickDialogsRef   = useRef(new Map())  // tick → dialog[]
+  const tickConflictsRef = useRef(new Set())  // set of ticks where conflicts occurred
   const [historyTicks, setHistoryTicks] = useState([])  // sorted tick numbers
   const [viewedTick, setViewedTick]     = useState(null) // null = live mode
 
@@ -89,6 +95,52 @@ export default function App() {
       console.warn('Failed to load photo:', e.message)
     }
   }
+
+  // ── Cache ─────────────────────────────────────────────────────
+  // useCallback with [] is safe here: only reads refs, never state
+  const saveToStorage = useCallback(() => {
+    const map = historyRef.current
+    if (map.size === 0) return
+    const allTicks  = Array.from(map.keys()).sort((a, b) => a - b)
+    const saveTicks = allTicks.slice(-MAX_CACHE_SNAPSHOTS)
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        history:   saveTicks.map(t => [t, map.get(t)]),
+        dialogs:   [...tickDialogsRef.current.entries()],
+        conflicts: [...tickConflictsRef.current],
+        savedAt:   Date.now(),
+      }))
+    } catch (e) {
+      console.warn('Cache save failed:', e.message)
+    }
+  }, [])
+
+  // Load persisted cache once on mount, before first poll arrives
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY)
+      if (!raw) return
+      const cache = JSON.parse(raw)
+      for (const [tick, snap]    of cache.history   ?? []) historyRef.current.set(tick, snap)
+      for (const [tick, dialogs] of cache.dialogs   ?? []) tickDialogsRef.current.set(tick, dialogs)
+      for (const tick            of cache.conflicts ?? []) tickConflictsRef.current.add(tick)
+      const ticks = Array.from(historyRef.current.keys()).sort((a, b) => a - b)
+      if (ticks.length > 0) {
+        setHistoryTicks(ticks)
+        // Seed the diff baseline so the first live poll only picks up genuinely new events
+        prevDataRef.current = historyRef.current.get(ticks.at(-1)) ?? null
+      }
+    } catch (e) {
+      console.warn('Cache load failed:', e.message)
+      localStorage.removeItem(CACHE_KEY)
+    }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save on tab close / navigation so the very last tick is always persisted
+  useEffect(() => {
+    window.addEventListener('beforeunload', saveToStorage)
+    return () => window.removeEventListener('beforeunload', saveToStorage)
+  }, [saveToStorage])
 
   // ── Polling ───────────────────────────────────────────────────
   const fetchState = useCallback(async () => {
@@ -150,6 +202,33 @@ export default function App() {
         tickDialogsRef.current.set(tick, [...existing, ...byKey.values()])
       }
 
+      // ── Detect newly arrived conflict events via diffing ──────
+      const CONFLICT_TYPES = new Set(['WAS_ATTACKED', 'WAS_ROBBED', 'ATTACKED_NPC', 'STOLE_FOOD'])
+      const prevEventKeys = new Set()
+      for (const npc of prevDataRef.current?.npcs ?? []) {
+        for (const e of npc.recentEvents ?? []) {
+          if (CONFLICT_TYPES.has(e.type)) {
+            prevEventKeys.add(`${npc.id}@${e.tick}@${e.type}`)
+          }
+        }
+      }
+      for (const npc of data.npcs) {
+        for (const e of npc.recentEvents ?? []) {
+          if (CONFLICT_TYPES.has(e.type)) {
+            const k = `${npc.id}@${e.tick}@${e.type}`
+            if (!prevEventKeys.has(k)) {
+              tickConflictsRef.current.add(e.tick)
+            }
+          }
+        }
+      }
+
+      // Periodic cache save (and always save when simulation stops)
+      if (data.tick - lastSavedTick.current >= CACHE_SAVE_INTERVAL || !data.running) {
+        lastSavedTick.current = data.tick
+        setTimeout(saveToStorage, 0)
+      }
+
       prevDataRef.current = data
     } catch (e) {
       setState(null)
@@ -174,7 +253,10 @@ export default function App() {
       localStorage.removeItem('npc-display-names')
       historyRef.current.clear()
       tickDialogsRef.current.clear()
+      tickConflictsRef.current.clear()
       prevDataRef.current = null
+      lastSavedTick.current = -Infinity
+      localStorage.removeItem(CACHE_KEY)
       setHistoryTicks([])
       setViewedTick(null)
     }
@@ -217,18 +299,21 @@ export default function App() {
     fetchState()
   }
 
-  // ── Scrubber state ────────────────────────────────────────────
-  const isLive = viewedTick === null
-  const sliderMax = Math.max(0, historyTicks.length - 1)
-  const sliderVal = isLive
-    ? sliderMax
-    : Math.max(0, historyTicks.indexOf(viewedTick))
-
-  const handleSlider = (e) => {
-    const idx = +e.target.value
-    // Rightmost position = back to live
-    setViewedTick(idx === historyTicks.length - 1 ? null : historyTicks[idx])
+  // ── Restart ───────────────────────────────────────────────────
+  const handleRestart = async () => {
+    try { await fetch('/api/control', { method: 'POST', body: 'stop' }) } catch {}
+    localStorage.removeItem(CACHE_KEY)
+    window.location.reload()
   }
+
+  // ── Scrubber ──────────────────────────────────────────────────
+  const isLive = viewedTick === null
+
+  // Derive marker sets from refs on each render (refs update with history)
+  const dialogTicks   = new Set(
+    [...tickDialogsRef.current.entries()].filter(([, v]) => v.length > 0).map(([k]) => k)
+  )
+  const conflictTicks = new Set(tickConflictsRef.current)
 
   // ── Derived display data ──────────────────────────────────────
   const displayedState   = isLive ? state : (historyRef.current.get(viewedTick) ?? state)
@@ -256,6 +341,7 @@ export default function App() {
             onPause={() => sendControl('pause')}
             onResume={() => sendControl('resume')}
             onStop={() => sendControl('stop')}
+            onRestart={handleRestart}
           />
         )}
       </header>
@@ -264,13 +350,12 @@ export default function App() {
         <div className="scrubber-bar">
           {!isLive && <span className="viewing-badge">t{viewedTick}</span>}
           <span className="scrubber-end">t{historyTicks[0]}</span>
-          <input
-            type="range"
-            className="tick-slider"
-            min={0}
-            max={sliderMax}
-            value={sliderVal}
-            onChange={handleSlider}
+          <TickScrubber
+            historyTicks={historyTicks}
+            viewedTick={viewedTick}
+            onScrub={setViewedTick}
+            dialogTicks={dialogTicks}
+            conflictTicks={conflictTicks}
           />
           <span className="scrubber-end">t{historyTicks.at(-1)}</span>
           {!isLive && (
