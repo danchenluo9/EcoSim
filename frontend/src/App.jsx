@@ -10,6 +10,7 @@ const MAX_HISTORY           = 300   // max tick snapshots kept in memory
 const CACHE_KEY             = 'ecosim-cache'
 const MAX_CACHE_SNAPSHOTS   = 60    // snapshots persisted to localStorage
 const CACHE_SAVE_INTERVAL   = 10    // save every N new ticks
+const CONFLICT_TYPES        = new Set(['WAS_ATTACKED', 'WAS_ROBBED', 'ATTACKED_NPC', 'STOLE_FOOD'])
 
 // ── Dialog strip ──────────────────────────────────────────────────
 function DialogStrip({ dialogs, displayNames }) {
@@ -42,11 +43,12 @@ export default function App() {
   const [state, setState]           = useState(null)
   const [selectedNPC, setSelectedNPC] = useState(null)
   const [error, setError]           = useState(null)
-  const fetchingRef    = useRef(false)
-  const prevStateRef   = useRef(null)   // for reset detection (set by useEffect)
-  const prevDataRef    = useRef(null)   // for dialog/conflict diffing
-  const lastSavedTick  = useRef(-Infinity)
-  const pollIntervalRef = useRef(null)
+  const fetchingRef       = useRef(false)
+  const prevStateRef      = useRef(null)      // for reset detection (set by useEffect)
+  const prevDataRef       = useRef(null)      // for dialog/conflict diffing
+  const lastSavedTick     = useRef(-Infinity)
+  const pollIntervalRef   = useRef(null)
+  const lastReceivedTick  = useRef(-1)        // highest tick we have fully processed
 
   // ── Tick history ──────────────────────────────────────────────
   const historyRef       = useRef(new Map())  // tick → raw state snapshot
@@ -128,8 +130,9 @@ export default function App() {
       const ticks = Array.from(historyRef.current.keys()).sort((a, b) => a - b)
       if (ticks.length > 0) {
         setHistoryTicks(ticks)
-        // Seed the diff baseline so the first live poll only picks up genuinely new events
-        prevDataRef.current = historyRef.current.get(ticks.at(-1)) ?? null
+        // Seed diff baseline and tick cursor so the first live poll only picks up new data
+        prevDataRef.current      = historyRef.current.get(ticks.at(-1)) ?? null
+        lastReceivedTick.current = ticks.at(-1)
       }
     } catch (e) {
       console.warn('Cache load failed:', e.message)
@@ -148,102 +151,102 @@ export default function App() {
     if (fetchingRef.current) return
     fetchingRef.current = true
     try {
-      const res = await fetch('/api/state')
+      const res = await fetch(`/api/history?since=${lastReceivedTick.current}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
+      const { current, history } = await res.json()
 
-      // Detect health drops to flash attacked NPCs
+      // Process each snapshot in order (history oldest→newest, then current).
+      // This detects dialogs and conflicts from every tick, not just the polled one.
+      const processSnap = (data) => {
+        historyRef.current.set(data.tick, data)
+
+        // Dialog detection — diff against previous snapshot
+        const prevConvKeys = new Set()
+        for (const npc of prevDataRef.current?.npcs ?? [])
+          for (const c of npc.conversations ?? []) prevConvKeys.add(convKey(c))
+
+        const newByTick = new Map()
+        for (const npc of data.npcs) {
+          for (const c of npc.conversations ?? []) {
+            const k = convKey(c)
+            if (!prevConvKeys.has(k)) {
+              if (!newByTick.has(c.tick)) newByTick.set(c.tick, new Map())
+              newByTick.get(c.tick).set(k, c)
+            }
+          }
+        }
+        for (const [tick, byKey] of newByTick) {
+          tickDialogsRef.current.set(tick, [
+            ...(tickDialogsRef.current.get(tick) ?? []), ...byKey.values(),
+          ])
+        }
+
+        // Conflict detection — diff against previous snapshot
+        const prevEventKeys = new Set()
+        for (const npc of prevDataRef.current?.npcs ?? [])
+          for (const e of npc.recentEvents ?? [])
+            if (CONFLICT_TYPES.has(e.type)) prevEventKeys.add(`${npc.id}@${e.tick}@${e.type}`)
+
+        for (const npc of data.npcs)
+          for (const e of npc.recentEvents ?? [])
+            if (CONFLICT_TYPES.has(e.type)) {
+              const k = `${npc.id}@${e.tick}@${e.type}`
+              if (!prevEventKeys.has(k)) tickConflictsRef.current.add(e.tick)
+            }
+
+        prevDataRef.current = data
+      }
+
+      for (const snap of history) processSnap(snap)
+      processSnap(current)
+
+      // Update React state with attack-flash detection across all new snapshots
       setState(prev => {
-        if (!prev) return data
-        const npcs = data.npcs.map(npc => {
-          const old = prev.npcs.find(n => n.id === npc.id)
-          return old && npc.health < old.health ? { ...npc, _attacked: true } : npc
-        })
-        return { ...data, npcs }
+        let prevNpcs = prev?.npcs ?? []
+        let finalNpcs = current.npcs
+        for (const snap of [...history, current]) {
+          const flashed = snap.npcs.map(npc => {
+            const old = prevNpcs.find(n => n.id === npc.id)
+            return old && npc.health < old.health ? { ...npc, _attacked: true } : npc
+          })
+          prevNpcs = snap.npcs          // raw (no flags) for the next iteration
+          if (snap.tick === current.tick) finalNpcs = flashed
+        }
+        return { ...current, npcs: finalNpcs }
       })
       setError(null)
-      setSelectedNPC(prev =>
-        prev ? data.npcs.find(n => n.id === prev.id) ?? null : null
-      )
+      setSelectedNPC(prev => prev ? current.npcs.find(n => n.id === prev.id) ?? null : null)
 
-      // ── Store snapshot in history ─────────────────────────────
+      // Advance the cursor to the highest tick we've now seen
+      lastReceivedTick.current = history.reduce((m, s) => Math.max(m, s.tick), current.tick)
+
+      // Trim history buffer and update sorted tick list
       const map = historyRef.current
-      map.set(data.tick, data)
-      if (map.size > MAX_HISTORY) {
-        map.delete(Math.min(...map.keys()))
-      }
+      while (map.size > MAX_HISTORY) map.delete(Math.min(...map.keys()))
       setHistoryTicks(prev => {
         const ticks = Array.from(map.keys()).sort((a, b) => a - b)
-        // Skip re-render if nothing changed
         if (ticks.length === prev.length && ticks.at(-1) === prev.at(-1)) return prev
         return ticks
       })
 
-      // ── Detect newly arrived dialogs via diffing ──────────────
-      // Build a key set from the previous raw poll
-      const prevConvKeys = new Set()
-      for (const npc of prevDataRef.current?.npcs ?? []) {
-        for (const c of npc.conversations ?? []) {
-          prevConvKeys.add(convKey(c))
-        }
-      }
-      // Any conversation not in the previous poll is "new"
-      const newByTick = new Map() // tick → Map<key, conv>
-      for (const npc of data.npcs) {
-        for (const c of npc.conversations ?? []) {
-          const k = convKey(c)
-          if (!prevConvKeys.has(k)) {
-            if (!newByTick.has(c.tick)) newByTick.set(c.tick, new Map())
-            newByTick.get(c.tick).set(k, c)
-          }
-        }
-      }
-      for (const [tick, byKey] of newByTick) {
-        const existing = tickDialogsRef.current.get(tick) ?? []
-        tickDialogsRef.current.set(tick, [...existing, ...byKey.values()])
-      }
-
-      // ── Detect newly arrived conflict events via diffing ──────
-      const CONFLICT_TYPES = new Set(['WAS_ATTACKED', 'WAS_ROBBED', 'ATTACKED_NPC', 'STOLE_FOOD'])
-      const prevEventKeys = new Set()
-      for (const npc of prevDataRef.current?.npcs ?? []) {
-        for (const e of npc.recentEvents ?? []) {
-          if (CONFLICT_TYPES.has(e.type)) {
-            prevEventKeys.add(`${npc.id}@${e.tick}@${e.type}`)
-          }
-        }
-      }
-      for (const npc of data.npcs) {
-        for (const e of npc.recentEvents ?? []) {
-          if (CONFLICT_TYPES.has(e.type)) {
-            const k = `${npc.id}@${e.tick}@${e.type}`
-            if (!prevEventKeys.has(k)) {
-              tickConflictsRef.current.add(e.tick)
-            }
-          }
-        }
-      }
-
-      // Periodic cache save (and always save when simulation stops)
-      if (data.tick - lastSavedTick.current >= CACHE_SAVE_INTERVAL || !data.running) {
-        lastSavedTick.current = data.tick
+      // Periodic cache save; always save when simulation stops
+      if (current.tick - lastSavedTick.current >= CACHE_SAVE_INTERVAL || !current.running) {
+        lastSavedTick.current = current.tick
         setTimeout(saveToStorage, 0)
       }
 
-      // Stop polling once the simulation finishes (running=false, tick>0 rules out setup state)
-      if (!data.running && data.tick > 0) {
+      // Stop polling once the simulation finishes
+      if (!current.running && current.tick > 0) {
         clearInterval(pollIntervalRef.current)
         pollIntervalRef.current = null
       }
-
-      prevDataRef.current = data
     } catch (e) {
       setState(null)
       setError('Cannot reach simulation server. Is it running?')
     } finally {
       fetchingRef.current = false
     }
-  }, [])
+  }, [saveToStorage])
 
   useEffect(() => {
     fetchState()
@@ -262,7 +265,8 @@ export default function App() {
       tickDialogsRef.current.clear()
       tickConflictsRef.current.clear()
       prevDataRef.current = null
-      lastSavedTick.current = -Infinity
+      lastSavedTick.current    = -Infinity
+      lastReceivedTick.current = -1
       localStorage.removeItem(CACHE_KEY)
       setHistoryTicks([])
       setViewedTick(null)
