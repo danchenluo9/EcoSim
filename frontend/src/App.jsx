@@ -38,6 +38,49 @@ function DialogStrip({ dialogs, displayNames }) {
   )
 }
 
+// ── Conflict strip ────────────────────────────────────────────────
+const CONFLICT_STYLE = {
+  WAS_ATTACKED: { icon: '⚔', color: '#f87171' },
+  ATTACKED_NPC: { icon: '⚔', color: '#fb923c' },
+  WAS_ROBBED:   { icon: '💰', color: '#fbbf24' },
+  STOLE_FOOD:   { icon: '💰', color: '#fbbf24' },
+}
+
+function ConflictStrip({ conflicts, displayNames }) {
+  if (!conflicts || conflicts.length === 0) return null
+  const resolve = (text) =>
+    Object.entries(displayNames ?? {}).reduce((s, [id, dn]) => s.replaceAll(id, dn), text ?? '')
+
+  // Deduplicate: same NPC + type + description counts once
+  const seen = new Set()
+  const unique = conflicts.filter(e => {
+    const k = `${e.npcId}|${e.type}|${e.description}`
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+
+  return (
+    <div className="conflict-strip">
+      <span className="conflict-strip-title">Conflicts</span>
+      <div className="conflict-strip-list">
+        {unique.map((e, i) => {
+          const s = CONFLICT_STYLE[e.type] ?? { icon: '⚠', color: '#94a3b8' }
+          return (
+            <div key={i} className="conflict-chip" style={{ borderColor: s.color }}>
+              <span className="conflict-icon">{s.icon}</span>
+              <span className="conflict-npc" style={{ color: s.color }}>
+                {displayNames?.[e.npcId] ?? e.npcId}
+              </span>
+              <span className="conflict-desc">{resolve(e.description)}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────────────
 export default function App() {
   const [state, setState]           = useState(null)
@@ -53,7 +96,7 @@ export default function App() {
   // ── Tick history ──────────────────────────────────────────────
   const historyRef       = useRef(new Map())  // tick → raw state snapshot
   const tickDialogsRef   = useRef(new Map())  // tick → dialog[]
-  const tickConflictsRef = useRef(new Set())  // set of ticks where conflicts occurred
+  const tickConflictsRef = useRef(new Map())  // tick → [{npcId, type, description}]
   const [historyTicks, setHistoryTicks] = useState([])  // sorted tick numbers
   const [viewedTick, setViewedTick]     = useState(null) // null = live mode
 
@@ -110,7 +153,7 @@ export default function App() {
       localStorage.setItem(CACHE_KEY, JSON.stringify({
         history:   saveTicks.map(t => [t, map.get(t)]),
         dialogs:   [...tickDialogsRef.current.entries()],
-        conflicts: [...tickConflictsRef.current],
+        conflicts: [...tickConflictsRef.current.entries()],
         savedAt:   Date.now(),
       }))
     } catch (e) {
@@ -126,7 +169,7 @@ export default function App() {
       const cache = JSON.parse(raw)
       for (const [tick, snap]    of cache.history   ?? []) historyRef.current.set(tick, snap)
       for (const [tick, dialogs] of cache.dialogs   ?? []) tickDialogsRef.current.set(tick, dialogs)
-      for (const tick            of cache.conflicts ?? []) tickConflictsRef.current.add(tick)
+      for (const [tick, events]  of cache.conflicts ?? []) tickConflictsRef.current.set(tick, events ?? [])
       const ticks = Array.from(historyRef.current.keys()).sort((a, b) => a - b)
       if (ticks.length > 0) {
         setHistoryTicks(ticks)
@@ -191,7 +234,11 @@ export default function App() {
           for (const e of npc.recentEvents ?? [])
             if (CONFLICT_TYPES.has(e.type)) {
               const k = `${npc.id}@${e.tick}@${e.type}`
-              if (!prevEventKeys.has(k)) tickConflictsRef.current.add(e.tick)
+              if (!prevEventKeys.has(k)) {
+                const existing = tickConflictsRef.current.get(e.tick) ?? []
+                existing.push({ npcId: npc.id, type: e.type, description: e.description })
+                tickConflictsRef.current.set(e.tick, existing)
+              }
             }
 
         prevDataRef.current = data
@@ -324,12 +371,13 @@ export default function App() {
   const dialogTicks   = new Set(
     [...tickDialogsRef.current.entries()].filter(([, v]) => v.length > 0).map(([k]) => k)
   )
-  const conflictTicks = new Set(tickConflictsRef.current)
+  const conflictTicks = new Set(tickConflictsRef.current.keys())
 
   // ── Derived display data ──────────────────────────────────────
   const displayedState   = isLive ? state : (historyRef.current.get(viewedTick) ?? state)
   const displayedTick    = displayedState?.tick ?? null
-  const displayedDialogs = displayedTick !== null ? (tickDialogsRef.current.get(displayedTick) ?? []) : []
+  const displayedDialogs   = displayedTick !== null ? (tickDialogsRef.current.get(displayedTick)   ?? []) : []
+  const displayedConflicts = displayedTick !== null ? (tickConflictsRef.current.get(displayedTick) ?? []) : []
 
   // When scrubbing, show the selected NPC's data from the historical snapshot
   const displayedNPC = selectedNPC
@@ -417,6 +465,7 @@ export default function App() {
             />
           </div>
           <DialogStrip dialogs={displayedDialogs} displayNames={displayNames} />
+          <ConflictStrip conflicts={displayedConflicts} displayNames={displayNames} />
         </>
       )}
     </div>
