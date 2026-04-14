@@ -74,9 +74,11 @@ body {
   transition: opacity .15s;
 }
 .btn:hover { opacity: 0.85; }
-.btn-pause  { background: #78350f; color: #fbbf24; }
-.btn-resume { background: #14532d; color: #4ade80; }
-.btn-stop   { background: #450a0a; color: #f87171; }
+.btn-pause   { background: #78350f; color: #fbbf24; }
+.btn-resume  { background: #14532d; color: #4ade80; }
+.btn-stop    { background: #450a0a; color: #f87171; }
+.btn-restart { background: transparent; color: #475569; border: 1px solid #2a2a3e; margin-left: 4px; }
+.btn-restart:hover { color: #94a3b8; border-color: #4a4a6e; opacity: 1; }
 
 /* ── Grid ────────────────────────────────────────────────────── */
 .grid-wrapper {
@@ -515,6 +517,242 @@ body {
   border-radius: 8px;
   margin-top: 8px;
   letter-spacing: 0.03em;
+}
+
+/* ── Tick scrubber ───────────────────────────────────────────── */
+.scrubber-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  background: #0f0f1a;
+  border-bottom: 1px solid #2a2a3e;
+  flex-shrink: 0;
+}
+
+/* Custom tick scrubber */
+.tick-scrubber {
+  position: relative;
+  flex: 1;
+  height: 32px;       /* 10px above track + 4px track + 10px below + 8px thumb bleed */
+  cursor: pointer;
+  min-width: 80px;
+}
+
+/* Horizontal track bar */
+.scrubber-track {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%; transform: translateY(-50%);
+  height: 4px;
+  background: #2a2a3e;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Filled (viewed) portion */
+.scrubber-fill {
+  height: 100%;
+  background: #3d2b6e;
+  border-radius: 2px;
+}
+
+/* Draggable thumb */
+.scrubber-thumb {
+  position: absolute;
+  top: 50%; transform: translate(-50%, -50%);
+  width: 13px; height: 13px;
+  background: #7c3aed;
+  border-radius: 50%;
+  border: 2px solid #a78bfa;
+  cursor: grab;
+  z-index: 4;
+  transition: transform .1s;
+}
+.scrubber-thumb:hover  { transform: translate(-50%, -50%) scale(1.2); }
+.scrubber-thumb:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.1); }
+
+/* Shared marker base */
+.scrubber-mark {
+  position: absolute;
+  transform: translateX(-50%);
+  width: 7px; height: 7px;
+  z-index: 3;
+  cursor: pointer;
+  transition: filter .12s;
+}
+.scrubber-mark:hover { filter: brightness(1.5); }
+
+/* Dialog mark: upward triangle, above the track */
+.scrubber-mark-dialog {
+  bottom: calc(50% + 5px);   /* sits just above track top */
+  background: #a78bfa;
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+
+/* Conflict mark: downward triangle, below the track */
+.scrubber-mark-conflict {
+  top: calc(50% + 5px);      /* sits just below track bottom */
+  background: #f87171;
+  clip-path: polygon(0% 0%, 100% 0%, 50% 100%);
+}
+
+.scrubber-end {
+  font-family: monospace;
+  font-size: 10px;
+  color: #475569;
+  flex-shrink: 0;
+}
+
+.viewing-badge {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #a78bfa;
+  background: #1e1a2e;
+  border: 1px solid #4a3a7e;
+  padding: 1px 8px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+.btn-live {
+  background: #2d1d5a;
+  color: #a78bfa;
+  border: 1px solid #4a3a7e;
+  font-size: 11px;
+  padding: 3px 10px;
+  flex-shrink: 0;
+}
+
+/* ── Dialog strip ────────────────────────────────────────────── */
+.dialog-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #0d0d18;
+  border-top: 1px solid #2a2a3e;
+  flex-shrink: 0;
+  min-height: 0;
+  max-height: 130px;
+  overflow: hidden;
+}
+
+.dialog-strip-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #475569;
+  padding-top: 3px;
+  flex-shrink: 0;
+}
+
+.dialog-strip-list {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  flex: 1;
+}
+
+.dialog-card {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+  padding: 7px 10px;
+  min-width: 210px;
+  max-width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dialog-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-card-pair {
+  font-size: 10px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.dialog-card-valence {
+  font-size: 10px;
+  font-family: monospace;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.dialog-card-line {
+  font-size: 11px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.dialog-card-line b {
+  color: #94a3b8;
+  font-weight: 600;
+  margin-right: 3px;
+}
+
+/* ── Conflict strip ──────────────────────────────────────────── */
+.conflict-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 16px;
+  background: #0d0d18;
+  border-top: 1px solid #1e1e2e;
+  flex-shrink: 0;
+}
+
+.conflict-strip-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #475569;
+  flex-shrink: 0;
+}
+
+.conflict-strip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.conflict-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: #13131f;
+  border: 1px solid;
+  border-radius: 99px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.conflict-icon { font-size: 10px; flex-shrink: 0; }
+
+.conflict-npc {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.conflict-desc {
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
 }
 
 /* ── Misc ────────────────────────────────────────────────────── */

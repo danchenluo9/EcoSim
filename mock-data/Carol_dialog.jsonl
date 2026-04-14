@@ -1,0 +1,9 @@
+```json {   "speaker_line": "I found some fresh water upstream. Thought you should know.",   "listener_line": "Thanks for that. I'll head over there once I've rested.",   "valence": 0.65 } ```
+```json {   "speaker_line": "We should map out the northeast area before dark falls.",   "listener_line": "Good idea. I'm getting tired, but a quick survey could help us both.",   "valence": 0.65 } ```
+```json {   "speaker_line": "Did you end up checking those berries? I'm heading back that direction soon.",   "listener_line": "Yeah, found a decent patch. Water's still fresh too if you need it.",   "valence": 0.65 } ```
+```json {   "speaker_line": "We need to find food soon. Have you seen anything edible nearby?",   "listener_line": "Found some berries by the stream earlier. We could check there together.",   "valence": 0.65 } ```
+```json {   "speaker_line": "I'm heading northeast to scout new territory. You look exhausted—rest here?",   "listener_line": "Can't rest yet. That berry patch won't wait. Come with me instead?",   "valence": 0.35 } ```
+```json {   "speaker_line": "Those berries won't cut it much longer. I'm heading northeast—want to come or stay put?",   "listener_line": "I need the berry patch first. Go scout, but don't stray too far alone out there.",   "valence": 0.15 } ```
+```json {   "speaker_line": "I'm crashing soon. Find high ground before dark—safer than the open.",   "listener_line": "Yeah, agreed. I spotted a ridge half a mile east. Meet there at dusk?",   "valence": 0.62 } ```
+```json {   "speaker_line": "I'm done. Need to crash here for a few hours. You staying or moving on?",   "listener_line": "Stay put. I'll keep watch while you sleep—easier than arguing about it.",   "valence": -0.35 } ```
+```json {   "speaker_line": "I'm heading upstream to find food. Don't follow me.",   "listener_line": "Fine. I'll go the other way. We both need space anyway.",   "valence": -0.85 } ```

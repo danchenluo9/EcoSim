@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
 
@@ -48,6 +49,7 @@ public class WorldServer {
     public void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress(PORT), 0);
         server.createContext("/api/state",   this::handleState);
+        server.createContext("/api/history", this::handleHistory);
         server.createContext("/api/control", this::handleControl);
         server.createContext("/api/npc",     this::handleNpc);
         server.setExecutor(Executors.newFixedThreadPool(2));
@@ -79,6 +81,58 @@ public class WorldServer {
             json = StateSerializer.serialize(loop.getWorld(), loop);
         }
         send(exchange, 200, json, "application/json");
+    }
+
+    /**
+     * GET /api/history?since=N
+     *
+     * Returns all buffered tick snapshots with tick > N (empty array when none),
+     * plus the current world state so the client can always detect a backend restart.
+     *
+     * Response: {"current":{...}, "history":[{...}, ...]}
+     */
+    private void handleHistory(HttpExchange exchange) throws IOException {
+        addCors(exchange);
+        if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+            return;
+        }
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "Method Not Allowed");
+            return;
+        }
+
+        long since = -1;
+        String query = exchange.getRequestURI().getQuery();
+        if (query != null) {
+            for (String param : query.split("&")) {
+                if (param.startsWith("since=")) {
+                    try { since = Long.parseLong(param.substring(6)); }
+                    catch (NumberFormatException ignored) {}
+                    break;
+                }
+            }
+        }
+
+        // Serialize current state under the world lock (same as /api/state)
+        String currentJson;
+        synchronized (loop.getWorld()) {
+            currentJson = StateSerializer.serialize(loop.getWorld(), loop);
+        }
+
+        // Buffered history snapshots (no world lock needed — already serialized)
+        List<String> history = loop.getSnapshotsSince(since);
+
+        StringBuilder sb = new StringBuilder("{\"current\":");
+        sb.append(currentJson).append(",\"history\":[");
+        for (int i = 0; i < history.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(history.get(i));
+        }
+        sb.append("]}");
+
+        send(exchange, 200, sb.toString(), "application/json");
     }
 
     private void handleControl(HttpExchange exchange) throws IOException {

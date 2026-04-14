@@ -2,9 +2,12 @@ package com.aiworld.core;
 
 import com.aiworld.action.DialogTask;
 import com.aiworld.npc.AbstractNPC;
+import com.aiworld.server.StateSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -23,6 +26,12 @@ import java.util.concurrent.TimeUnit;
 public class WorldLoop implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(WorldLoop.class);
+
+    /** Snapshot captured at the end of each completed tick for /api/history. */
+    private record TickSnapshot(long tick, String json) {}
+
+    private static final int                MAX_BUFFER  = 500;
+    private final ArrayDeque<TickSnapshot>  tickBuffer  = new ArrayDeque<>();
 
     private final World                 world;
     private final long                  tickIntervalMs;
@@ -118,6 +127,17 @@ public class WorldLoop implements Runnable {
         if (!running || paused) return;
         try {
             world.tick();
+
+            // Capture a snapshot immediately after the tick while holding the world lock,
+            // so /api/history can serve every tick regardless of frontend poll frequency.
+            synchronized (world) {
+                String json = StateSerializer.serialize(world, this);
+                synchronized (tickBuffer) {
+                    tickBuffer.addLast(new TickSnapshot(world.getCurrentTick(), json));
+                    while (tickBuffer.size() > MAX_BUFFER) tickBuffer.removeFirst();
+                }
+            }
+
             if (maxTicks > 0 && world.getCurrentTick() >= maxTicks) {
                 log.info("Max ticks reached — stopping simulation.");
                 // Set flag and cancel future invocations directly.
@@ -135,6 +155,21 @@ public class WorldLoop implements Runnable {
         } catch (Exception e) {
             log.error("Error during tick {}", world.getCurrentTick(), e);
         }
+    }
+
+    /**
+     * Returns pre-serialized JSON snapshots for all ticks strictly after
+     * {@code sinceExclusive}, in ascending tick order.
+     * Thread-safe; the returned list is a snapshot copy.
+     */
+    public List<String> getSnapshotsSince(long sinceExclusive) {
+        List<String> result = new ArrayList<>();
+        synchronized (tickBuffer) {
+            for (TickSnapshot s : tickBuffer) {
+                if (s.tick() > sinceExclusive) result.add(s.json());
+            }
+        }
+        return result;
     }
 
     public boolean isRunning() { return running; }

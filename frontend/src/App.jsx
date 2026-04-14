@@ -3,16 +3,104 @@ import WorldGrid from './components/WorldGrid.jsx'
 import NPCPanel from './components/NPCPanel.jsx'
 import ControlBar from './components/ControlBar.jsx'
 import SetupScreen from './components/SetupScreen.jsx'
+import TickScrubber from './components/TickScrubber.jsx'
 
-const POLL_INTERVAL_MS = 500
+const POLL_INTERVAL_MS      = 500
+const MAX_HISTORY           = 300   // max tick snapshots kept in memory
+const CACHE_KEY             = 'ecosim-cache'
+const MAX_CACHE_SNAPSHOTS   = 60    // snapshots persisted to localStorage
+const CACHE_SAVE_INTERVAL   = 10    // save every N new ticks
+const CONFLICT_TYPES        = new Set(['WAS_ATTACKED', 'WAS_ROBBED', 'ATTACKED_NPC', 'STOLE_FOOD'])
 
+// ── Dialog strip ──────────────────────────────────────────────────
+function DialogStrip({ dialogs, displayNames }) {
+  if (!dialogs || dialogs.length === 0) return null
+  const name  = id => displayNames?.[id] ?? id
+  const vColor = v  => v > 0.2 ? '#4ade80' : v < -0.2 ? '#f87171' : '#94a3b8'
+  return (
+    <div className="dialog-strip">
+      <span className="dialog-strip-title">Dialogs</span>
+      <div className="dialog-strip-list">
+        {dialogs.map((c, i) => (
+          <div key={i} className="dialog-card">
+            <div className="dialog-card-header">
+              <span className="dialog-card-pair">{name(c.speakerId)} → {name(c.listenerId)}</span>
+              <span className="dialog-card-valence" style={{ color: vColor(c.valence) }}>
+                {c.valence > 0 ? '+' : ''}{c.valence}
+              </span>
+            </div>
+            <div className="dialog-card-line"><b>{name(c.speakerId)}:</b> "{c.speakerLine}"</div>
+            <div className="dialog-card-line"><b>{name(c.listenerId)}:</b> "{c.listenerLine}"</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Conflict strip ────────────────────────────────────────────────
+const CONFLICT_STYLE = {
+  WAS_ATTACKED: { icon: '⚔', color: '#f87171' },
+  ATTACKED_NPC: { icon: '⚔', color: '#fb923c' },
+  WAS_ROBBED:   { icon: '💰', color: '#fbbf24' },
+  STOLE_FOOD:   { icon: '💰', color: '#fbbf24' },
+}
+
+function ConflictStrip({ conflicts, displayNames }) {
+  if (!conflicts || conflicts.length === 0) return null
+  const resolve = (text) =>
+    Object.entries(displayNames ?? {}).reduce((s, [id, dn]) => s.replaceAll(id, dn), text ?? '')
+
+  // Deduplicate: same NPC + type + description counts once
+  const seen = new Set()
+  const unique = conflicts.filter(e => {
+    const k = `${e.npcId}|${e.type}|${e.description}`
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+
+  return (
+    <div className="conflict-strip">
+      <span className="conflict-strip-title">Conflicts</span>
+      <div className="conflict-strip-list">
+        {unique.map((e, i) => {
+          const s = CONFLICT_STYLE[e.type] ?? { icon: '⚠', color: '#94a3b8' }
+          return (
+            <div key={i} className="conflict-chip" style={{ borderColor: s.color }}>
+              <span className="conflict-icon">{s.icon}</span>
+              <span className="conflict-npc" style={{ color: s.color }}>
+                {displayNames?.[e.npcId] ?? e.npcId}
+              </span>
+              <span className="conflict-desc">{resolve(e.description)}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── App ───────────────────────────────────────────────────────────
 export default function App() {
-  const [state, setState] = useState(null)
+  const [state, setState]           = useState(null)
   const [selectedNPC, setSelectedNPC] = useState(null)
-  const [error, setError] = useState(null)
-  const fetchingRef = useRef(false)
-  const prevStateRef = useRef(null)
+  const [error, setError]           = useState(null)
+  const fetchingRef       = useRef(false)
+  const prevStateRef      = useRef(null)      // for reset detection (set by useEffect)
+  const prevDataRef       = useRef(null)      // for dialog/conflict diffing
+  const lastSavedTick     = useRef(-Infinity)
+  const pollIntervalRef   = useRef(null)
+  const lastReceivedTick  = useRef(-1)        // highest tick we have fully processed
 
+  // ── Tick history ──────────────────────────────────────────────
+  const historyRef       = useRef(new Map())  // tick → raw state snapshot
+  const tickDialogsRef   = useRef(new Map())  // tick → dialog[]
+  const tickConflictsRef = useRef(new Map())  // tick → [{npcId, type, description}]
+  const [historyTicks, setHistoryTicks] = useState([])  // sorted tick numbers
+  const [viewedTick, setViewedTick]     = useState(null) // null = live mode
+
+  // ── Display names / photos ────────────────────────────────────
   const [displayNames, setDisplayNames] = useState(() => {
     try { return JSON.parse(localStorage.getItem('npc-display-names') ?? '{}') }
     catch { return {} }
@@ -54,50 +142,186 @@ export default function App() {
     }
   }
 
+  // ── Cache ─────────────────────────────────────────────────────
+  // useCallback with [] is safe here: only reads refs, never state
+  const saveToStorage = useCallback(() => {
+    const map = historyRef.current
+    if (map.size === 0) return
+    const allTicks  = Array.from(map.keys()).sort((a, b) => a - b)
+    const saveTicks = allTicks.slice(-MAX_CACHE_SNAPSHOTS)
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        history:   saveTicks.map(t => [t, map.get(t)]),
+        dialogs:   [...tickDialogsRef.current.entries()],
+        conflicts: [...tickConflictsRef.current.entries()],
+        savedAt:   Date.now(),
+      }))
+    } catch (e) {
+      console.warn('Cache save failed:', e.message)
+    }
+  }, [])
+
+  // Load persisted cache once on mount, before first poll arrives
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY)
+      if (!raw) return
+      const cache = JSON.parse(raw)
+      for (const [tick, snap]    of cache.history   ?? []) historyRef.current.set(tick, snap)
+      for (const [tick, dialogs] of cache.dialogs   ?? []) tickDialogsRef.current.set(tick, dialogs)
+      for (const [tick, events]  of cache.conflicts ?? []) tickConflictsRef.current.set(tick, events ?? [])
+      const ticks = Array.from(historyRef.current.keys()).sort((a, b) => a - b)
+      if (ticks.length > 0) {
+        setHistoryTicks(ticks)
+        // Seed diff baseline and tick cursor so the first live poll only picks up new data
+        prevDataRef.current      = historyRef.current.get(ticks.at(-1)) ?? null
+        lastReceivedTick.current = ticks.at(-1)
+      }
+    } catch (e) {
+      console.warn('Cache load failed:', e.message)
+      localStorage.removeItem(CACHE_KEY)
+    }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save on tab close / navigation so the very last tick is always persisted
+  useEffect(() => {
+    window.addEventListener('beforeunload', saveToStorage)
+    return () => window.removeEventListener('beforeunload', saveToStorage)
+  }, [saveToStorage])
+
+  // ── Polling ───────────────────────────────────────────────────
   const fetchState = useCallback(async () => {
-    if (fetchingRef.current) return   // drop poll if previous one is still in flight
+    if (fetchingRef.current) return
     fetchingRef.current = true
     try {
-      const res = await fetch('/api/state')
+      const res = await fetch(`/api/history?since=${lastReceivedTick.current}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      // Detect health drops to flash attacked NPCs
+      const { current, history } = await res.json()
+
+      // Process each snapshot in order (history oldest→newest, then current).
+      // This detects dialogs and conflicts from every tick, not just the polled one.
+      const processSnap = (data) => {
+        historyRef.current.set(data.tick, data)
+
+        // Dialog detection — diff against previous snapshot
+        const prevConvKeys = new Set()
+        for (const npc of prevDataRef.current?.npcs ?? [])
+          for (const c of npc.conversations ?? []) prevConvKeys.add(convKey(c))
+
+        const newByTick = new Map()
+        for (const npc of data.npcs) {
+          for (const c of npc.conversations ?? []) {
+            const k = convKey(c)
+            if (!prevConvKeys.has(k)) {
+              if (!newByTick.has(c.tick)) newByTick.set(c.tick, new Map())
+              newByTick.get(c.tick).set(k, c)
+            }
+          }
+        }
+        for (const [tick, byKey] of newByTick) {
+          tickDialogsRef.current.set(tick, [
+            ...(tickDialogsRef.current.get(tick) ?? []), ...byKey.values(),
+          ])
+        }
+
+        // Conflict detection — diff against previous snapshot
+        const prevEventKeys = new Set()
+        for (const npc of prevDataRef.current?.npcs ?? [])
+          for (const e of npc.recentEvents ?? [])
+            if (CONFLICT_TYPES.has(e.type)) prevEventKeys.add(`${npc.id}@${e.tick}@${e.type}`)
+
+        for (const npc of data.npcs)
+          for (const e of npc.recentEvents ?? [])
+            if (CONFLICT_TYPES.has(e.type)) {
+              const k = `${npc.id}@${e.tick}@${e.type}`
+              if (!prevEventKeys.has(k)) {
+                const existing = tickConflictsRef.current.get(e.tick) ?? []
+                existing.push({ npcId: npc.id, type: e.type, description: e.description })
+                tickConflictsRef.current.set(e.tick, existing)
+              }
+            }
+
+        prevDataRef.current = data
+      }
+
+      for (const snap of history) processSnap(snap)
+      processSnap(current)
+
+      // Update React state with attack-flash detection across all new snapshots
       setState(prev => {
-        if (!prev) return data
-        const npcs = data.npcs.map(npc => {
-          const old = prev.npcs.find(n => n.id === npc.id)
-          return old && npc.health < old.health ? { ...npc, _attacked: true } : npc
-        })
-        return { ...data, npcs }
+        let prevNpcs = prev?.npcs ?? []
+        let finalNpcs = current.npcs
+        for (const snap of [...history, current]) {
+          const flashed = snap.npcs.map(npc => {
+            const old = prevNpcs.find(n => n.id === npc.id)
+            return old && npc.health < old.health ? { ...npc, _attacked: true } : npc
+          })
+          prevNpcs = snap.npcs          // raw (no flags) for the next iteration
+          if (snap.tick === current.tick) finalNpcs = flashed
+        }
+        return { ...current, npcs: finalNpcs }
       })
       setError(null)
-      setSelectedNPC(prev =>
-        prev ? data.npcs.find(n => n.id === prev.id) ?? null : null
-      )
+      setSelectedNPC(prev => prev ? current.npcs.find(n => n.id === prev.id) ?? null : null)
+
+      // Advance the cursor to the highest tick we've now seen
+      lastReceivedTick.current = history.reduce((m, s) => Math.max(m, s.tick), current.tick)
+
+      // Trim history buffer and update sorted tick list
+      const map = historyRef.current
+      while (map.size > MAX_HISTORY) map.delete(Math.min(...map.keys()))
+      setHistoryTicks(prev => {
+        const ticks = Array.from(map.keys()).sort((a, b) => a - b)
+        if (ticks.length === prev.length && ticks.at(-1) === prev.at(-1)) return prev
+        return ticks
+      })
+
+      // Periodic cache save; always save when simulation stops
+      if (current.tick - lastSavedTick.current >= CACHE_SAVE_INTERVAL || !current.running) {
+        lastSavedTick.current = current.tick
+        setTimeout(saveToStorage, 0)
+      }
+
+      // Stop polling once the simulation finishes
+      if (!current.running && current.tick > 0) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
     } catch (e) {
       setState(null)
       setError('Cannot reach simulation server. Is it running?')
     } finally {
       fetchingRef.current = false
     }
-  }, [])
+  }, [saveToStorage])
 
   useEffect(() => {
     fetchState()
-    const id = setInterval(fetchState, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    pollIntervalRef.current = setInterval(fetchState, POLL_INTERVAL_MS)
+    return () => clearInterval(pollIntervalRef.current)
   }, [fetchState])
 
+  // Clear history on simulation reset (new run started)
   useEffect(() => {
     if (prevStateRef.current === null && state && state.tick === 0 && !state.running) {
       setPhotos({})
       setDisplayNames({})
       localStorage.removeItem('npc-photos')
       localStorage.removeItem('npc-display-names')
+      historyRef.current.clear()
+      tickDialogsRef.current.clear()
+      tickConflictsRef.current.clear()
+      prevDataRef.current = null
+      lastSavedTick.current    = -Infinity
+      lastReceivedTick.current = -1
+      localStorage.removeItem(CACHE_KEY)
+      setHistoryTicks([])
+      setViewedTick(null)
     }
     prevStateRef.current = state
   }, [state])
 
+  // ── Control actions ───────────────────────────────────────────
   const sendControl = async (action) => {
     try {
       const res = await fetch('/api/control', { method: 'POST', body: action })
@@ -133,7 +357,35 @@ export default function App() {
     fetchState()
   }
 
+  // ── Restart ───────────────────────────────────────────────────
+  const handleRestart = async () => {
+    try { await fetch('/api/control', { method: 'POST', body: 'stop' }) } catch {}
+    localStorage.removeItem(CACHE_KEY)
+    window.location.reload()
+  }
+
+  // ── Scrubber ──────────────────────────────────────────────────
+  const isLive = viewedTick === null
+
+  // Derive marker sets from refs on each render (refs update with history)
+  const dialogTicks   = new Set(
+    [...tickDialogsRef.current.entries()].filter(([, v]) => v.length > 0).map(([k]) => k)
+  )
+  const conflictTicks = new Set(tickConflictsRef.current.keys())
+
+  // ── Derived display data ──────────────────────────────────────
+  const displayedState   = isLive ? state : (historyRef.current.get(viewedTick) ?? state)
+  const displayedTick    = displayedState?.tick ?? null
+  const displayedDialogs   = displayedTick !== null ? (tickDialogsRef.current.get(displayedTick)   ?? []) : []
+  const displayedConflicts = displayedTick !== null ? (tickConflictsRef.current.get(displayedTick) ?? []) : []
+
+  // When scrubbing, show the selected NPC's data from the historical snapshot
+  const displayedNPC = selectedNPC
+    ? (displayedState?.npcs.find(n => n.id === selectedNPC.id) ?? selectedNPC)
+    : null
+
   const isSetup = state && !state.running && state.tick === 0
+  const showScrubber = state && !isSetup && historyTicks.length > 1
 
   return (
     <div className="app">
@@ -142,14 +394,36 @@ export default function App() {
         {state && !isSetup && (
           <ControlBar
             tick={state.tick}
+            viewedTick={viewedTick}
             running={state.running}
             paused={state.paused}
             onPause={() => sendControl('pause')}
             onResume={() => sendControl('resume')}
             onStop={() => sendControl('stop')}
+            onRestart={handleRestart}
           />
         )}
       </header>
+
+      {showScrubber && (
+        <div className="scrubber-bar">
+          {!isLive && <span className="viewing-badge">t{viewedTick}</span>}
+          <span className="scrubber-end">t{historyTicks[0]}</span>
+          <TickScrubber
+            historyTicks={historyTicks}
+            viewedTick={viewedTick}
+            onScrub={setViewedTick}
+            dialogTicks={dialogTicks}
+            conflictTicks={conflictTicks}
+          />
+          <span className="scrubber-end">t{historyTicks.at(-1)}</span>
+          {!isLive && (
+            <button className="btn btn-live" onClick={() => setViewedTick(null)}>
+              ⏵ Live
+            </button>
+          )}
+        </div>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
@@ -168,28 +442,38 @@ export default function App() {
       )}
 
       {state && !isSetup && (
-        <div className="app-body">
-          <WorldGrid
-            width={state.width}
-            height={state.height}
-            npcs={state.npcs}
-            resources={state.resources}
-            selectedId={selectedNPC?.id}
-            onSelectNPC={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
-            displayNames={displayNames}
-            photos={photos}
-          />
-          <NPCPanel
-            npcs={state.npcs}
-            selected={selectedNPC}
-            onSelect={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
-            displayNames={displayNames}
-            photos={photos}
-            onUpdateName={updateDisplayName}
-            onUpdatePhoto={updatePhoto}
-          />
-        </div>
+        <>
+          <div className="app-body">
+            <WorldGrid
+              width={displayedState?.width   ?? state.width}
+              height={displayedState?.height  ?? state.height}
+              npcs={displayedState?.npcs      ?? state.npcs}
+              resources={displayedState?.resources ?? state.resources}
+              selectedId={selectedNPC?.id}
+              onSelectNPC={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
+              displayNames={displayNames}
+              photos={photos}
+            />
+            <NPCPanel
+              npcs={displayedState?.npcs ?? state.npcs}
+              selected={displayedNPC}
+              onSelect={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
+              displayNames={displayNames}
+              photos={photos}
+              onUpdateName={updateDisplayName}
+              onUpdatePhoto={updatePhoto}
+            />
+          </div>
+          <DialogStrip dialogs={displayedDialogs} displayNames={displayNames} />
+          <ConflictStrip conflicts={displayedConflicts} displayNames={displayNames} />
+        </>
       )}
     </div>
   )
+}
+
+// Stable dedup key for a conversation: sort speaker/listener so A→B and B→A
+// (which would appear in both NPCs' lists) collapse to the same key.
+function convKey(c) {
+  return [...[c.speakerId, c.listenerId]].sort().join('↔') + '@' + c.tick
 }

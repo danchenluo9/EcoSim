@@ -1,0 +1,9 @@
+```json {   "speaker_line": "Seen any freshwater sources heading east? I'm planning to scout that direction.",   "listener_line": "Not yet, but I'll keep an eye out. Mind if I come along?",   "valence": 0.65 } ```
+```json {   "speaker_line": "Found some berries by the stream. Worth checking out if you're heading that way.",   "listener_line": "Good to know. I'll swing by there after I scout the ridge.",   "valence": 0.6 } ```
+```json {   "speaker_line": "The berry patch is just past the north ridge. We should move fast before others find it.",   "listener_line": "I'm exhausted, but I'm with you. We'll grab what we can and bring it back to share.",   "valence": 0.72 } ```
+```json {   "speaker_line": "The berries won't last long. We need to move now before someone else strips the patch.",   "listener_line": "I can barely stand. Find them yourself—I'm done trusting your plans.",   "valence": -0.85 } ```
+```json {   "speaker_line": "Stay back. The berries are mine—you had your chance.",   "listener_line": "Come near that patch and I'll make you regret it.",   "valence": -0.95 } ```
+```json {   "speaker_line": "Found a decent hunting spot upstream. You look rough—need help finding shelter?",   "listener_line": "I appreciate it, but I need to rest alone somewhere safe. Thanks though.",   "valence": 0.3 } ```
+```json {   "speaker_line": "You're still looking rough. There's game upstream if you want to hunt instead of hiding.",   "listener_line": "I appreciate the offer, Dave, but I need rest more than food right now. Alone.",   "valence": -0.35 } ```
+```json {   "speaker_line": "You're not looking good. At least take some water before you disappear again.",   "listener_line": "I said alone, Dave. Don't follow me this time—I mean it.",   "valence": -0.85 } ```
+```json {   "speaker_line": "You took what was mine. We settle this now, Alice.",   "listener_line": "Back off, Dave. I'm not fighting you—I'm leaving.",   "valence": -0.95 } ```
