@@ -28,7 +28,6 @@ export default function TickScrubber({
     const { left, width } = containerRef.current.getBoundingClientRect()
     const ratio  = Math.max(0, Math.min(1, (clientX - left) / width))
     const target = first + ratio * span
-    console.log({ clientX, left, width, ratio, target })
     return historyTicks.reduce((best, t) =>
       Math.abs(t - target) < Math.abs(best - target) ? t : best
     )

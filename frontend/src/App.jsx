@@ -417,11 +417,13 @@ export default function App() {
             conflictTicks={conflictTicks}
           />
           <span className="scrubber-end">t{historyTicks.at(-1)}</span>
-          {!isLive && (
-            <button className="btn btn-live" onClick={() => setViewedTick(null)}>
-              ⏵ Live
-            </button>
-          )}
+          <button
+            className="btn btn-live"
+            onClick={() => setViewedTick(null)}
+            disabled={isLive}
+          >
+            ⏵ Live
+          </button>
         </div>
       )}
 

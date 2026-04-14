@@ -1,201 +1,203 @@
 # EcoSim
 
-EcoSim is a Java-based NPC simulation where autonomous agents pursue survival, exploration, and social goals inside a 2D grid world. The simulation runs in ticks and prints behavior logs so you can observe emergent cooperation, competition, and movement patterns.
+A 2D grid-based NPC simulation where autonomous agents pursue survival, exploration, and social goals. Each NPC uses utility-based goal scoring for moment-to-moment decisions, and calls the Claude LLM for high-level strategic planning and inter-NPC dialogue. The simulation is visualized through a React web UI with a full tick-history scrubber.
 
-## What This Project Includes
+![EcoSim UI](docs/screenshot-placeholder.png)
 
-- Utility-style goal evaluation for each NPC.
-- Actions such as move, gather, rest, and interact.
-- A world loop with configurable tick interval and max tick count.
-- Resource regeneration and spatial queries.
-- Memory/impression systems that influence social behavior.
+## Features
 
-## Tech Stack
-
-- Java 17
-- Maven 3.8+
+- **Utility-based AI** — NPCs score competing goals (Survival, Exploration, Social, Aggression) and pick the highest-utility action each tick
+- **LLM strategy layer** — Claude generates strategic directives that bias the utility engine for 30–60 ticks at a time
+- **LLM dialogue** — NPCs generate in-character conversations when they meet; dialogue affects trust scores and memory
+- **Personality archetypes** — Forager, Diplomat, Explorer, Fighter each weight goals differently
+- **Memory system** — NPCs remember attacks, alliances, robberies, and conversations; impressions decay over time
+- **React web UI** — live 2D grid, NPC panel with stats/memory/conversations, tick history scrubber
+- **LLM mock system** — record real API responses once, replay offline indefinitely (no API cost during debugging)
 
 ## Prerequisites
 
-1. Install Java 17 (JDK, not JRE).
-2. Install Maven.
-3. Verify both are available:
+| Tool | Version |
+|------|---------|
+| Java JDK | 17+ |
+| Maven | 3.8+ |
+| Node.js | 18+ |
 
 ```bash
-java -version
-mvn --version
+java -version && mvn --version && node --version
 ```
 
 ## Quick Start
 
-1. Clone or open the project in VS Code.
-2. From the project root, build it once:
-
 ```bash
-mvn -DskipTests package
+# 1. Clone the repo
+git clone <repo-url> && cd EcoSim
+
+# 2. Copy and fill in your API key
+cp .env.example .env          # or create .env manually (see below)
+
+# 3. Record a session so you have mock data for debugging
+./start.sh 1
+
+# 4. Open http://localhost:5173, configure NPCs, click Start
+# 5. When done, Ctrl+C. From now on you can develop without API calls:
+./start.sh                    # uses saved mock data by default
 ```
 
-3. Run the simulator:
+> **First time?** You need a real API key for step 3. After that, `./start.sh` (no argument) replays saved responses — no key needed.
+
+## Environment Variables
+
+Create a `.env` file in the project root (never committed):
 
 ```bash
-mvn exec:java
+ANTHROPIC_API_KEY=sk-ant-...   # required for live/record modes
+ECOSIM_WIDTH=20                # grid width  (default: 20)
+ECOSIM_HEIGHT=20               # grid height (default: 20)
+ECOSIM_TICK_MS=300             # ms per tick (default: 300)
+ECOSIM_MAX_TICKS=100           # 0 = run forever (default: 100)
+ECOSIM_PORT=8081               # backend HTTP port (default: 8081)
 ```
 
-### Using .env Environment Parameters
+## Running
 
-The simulator reads settings via environment variables (`System.getenv`), including:
-
-- `ANTHROPIC_API_KEY`
-- `ECOSIM_WIDTH`
-- `ECOSIM_HEIGHT`
-- `ECOSIM_TICK_MS`
-- `ECOSIM_MAX_TICKS`
-- `ECOSIM_PORT`
-
-Example `.env`:
+### Recommended: launcher script
 
 ```bash
-ANTHROPIC_API_KEY=your_key_here
-ECOSIM_WIDTH=30
-ECOSIM_HEIGHT=20
-ECOSIM_TICK_MS=250
-ECOSIM_MAX_TICKS=0
-ECOSIM_PORT=8081
+./start.sh       # playback mode — uses saved mock data, no API key needed
+./start.sh 1     # record mode  — calls real API and saves responses to mock-data/
 ```
 
-Run with `.env` in the current shell:
+The launcher loads `.env`, starts the Java backend and Vite frontend in parallel, and opens the browser.
+
+### Manual
 
 ```bash
-set -a; source .env; set +a; mvn exec:java
-```
+# Backend only
+set -a; source .env; set +a
+ECOSIM_LLM_MODE=playback mvn exec:java   # or: record / (omit for live)
 
-Or use the launcher (it now auto-loads `.env` if present):
+# Frontend only (dev server, hot reload, proxies /api/* to :8081)
+cd frontend && npm install && npm run dev
 
-```bash
-./start.sh
-```
-
-You should see a banner, then per-tick logs such as movement, gathering, cooperation, and final world state.
-
-## Build and Run Options
-
-### Run directly with Maven
-
-```bash
-mvn exec:java
-```
-
-This uses the configured main class: `com.aiworld.Simulator`.
-
-### Build runnable JAR
-
-```bash
+# Build fat JAR
 mvn clean package
-```
-
-Generated artifacts are placed under `target/`, including:
-
-- `ai-npc-world-1.0-SNAPSHOT.jar`
-- `ai-npc-world-1.0-SNAPSHOT-jar-with-dependencies.jar`
-
-Run the fat JAR:
-
-```bash
 java -jar target/ai-npc-world-1.0-SNAPSHOT-jar-with-dependencies.jar
 ```
 
-## Initialize and Configure the Current Simulation
+## LLM Modes
 
-The initial world setup is defined in `src/main/java/com/aiworld/Simulator.java`:
+EcoSim has three LLM modes, controlled by the `ECOSIM_LLM_MODE` environment variable:
 
-- World size (`WORLD_WIDTH`, `WORLD_HEIGHT`)
-- Tick settings (`TICK_INTERVAL_MS`, `MAX_TICKS`)
-- Initial resource placement and quantities
-- Initial NPC spawn positions
+| Mode | Command | Description |
+|------|---------|-------------|
+| **live** | *(default, no var)* | Calls the real Claude API every time |
+| **record** | `./start.sh 1` | Calls the real API **and** saves responses to `mock-data/` |
+| **playback** | `./start.sh` | Replays saved responses — no API calls, no key needed |
 
-To initialize a different scenario, edit those constants and spawn/resource declarations, then rerun:
-
-```bash
-mvn exec:java
+Each NPC gets its own pair of files:
+```
+mock-data/
+  Alice_strategy.jsonl    ← one strategy JSON per line
+  Alice_dialog.jsonl      ← one dialog JSON per line
+  Bob_strategy.jsonl
+  ...
 ```
 
-Common setup ideas:
+Responses cycle round-robin, so a playback run can last longer than the recording. See [docs/llm-modes.md](docs/llm-modes.md) for full details.
 
-- Resource-scarce world for stronger competition.
-- Resource-abundant world for more cooperation.
-- Clustered NPC starts for early social interactions.
-- Set `MAX_TICKS = 0` for an effectively unbounded run.
+## Web UI
+
+Open **http://localhost:5173** after starting.
+
+### Setup screen
+Configure each NPC's personality archetype before the simulation starts. Click **Start** when ready.
+
+### Simulation view
+
+| Element | Description |
+|---------|-------------|
+| **Grid** | 2D world — click an NPC to select it |
+| **NPC panel** | Stats, strategy, action log, conversations, impressions, events |
+| **Control bar** | Tick counter, pause/resume/stop, **↺ New Sim** button |
+| **Tick scrubber** | Drag to any historical tick; ▲ purple = dialog event, ▼ red = conflict |
+| **Dialog strip** | Conversations that happened at the viewed tick |
+| **Conflict strip** | Attacks and thefts at the viewed tick |
+
+The frontend caches the last 60 tick snapshots in `localStorage` so history survives a page refresh.
+
+Clicking **↺ New Sim** clears the cache and reloads. Restart the backend to start a fresh simulation.
+
+## Architecture Overview
+
+```
+Browser (React)
+    │  polls /api/history?since=N every 500ms
+    ▼
+WorldServer (Java HttpServer :8081)
+    ├── GET  /api/history?since=N  → buffered tick snapshots since tick N
+    ├── GET  /api/state            → current world snapshot
+    ├── POST /api/control          → pause / resume / stop
+    └── POST /api/npc             → set NPC archetype (setup only)
+    │
+WorldLoop (300ms tick scheduler)
+    │  after each tick: serialize + push to ring buffer (≤500 ticks)
+    ▼
+World.tick()
+    ├── Phase 1 (world lock): regenerate resources, update each NPC
+    │       NPC: GoalSystem.score() → DecisionEngine.selectAction() → Action.execute()
+    │       StrategyManager: async LLM call if cooldown/emergency triggers
+    ├── Phase 2 (no lock): fire dialog HTTP calls concurrently (max 4/tick)
+    └── Phase 3 (world lock): apply dialog results, update trust/memory
+```
+
+### NPC Decision Pipeline
+
+```
+NPC.update()
+  └─ StrategyManager.tick()          ← checks if LLM strategy refresh is due
+       └─ LLMClient.call()           ← ClaudeClient / RecordingLLMClient / PlaybackLLMClient
+  └─ GoalSystem.score()              ← Survival, Explore, Social, Aggression urgencies
+  └─ DecisionEngine.selectAction()   ← picks highest utility × strategy multiplier
+  └─ Action.execute()                ← Move / Gather / Rest / Interact / Dialog / Attack / Steal
+```
 
 ## Project Structure
 
-```text
-src/main/java/com/aiworld/
-	Simulator.java           # Entry point and initial world configuration
-	action/                  # NPC actions (move, gather, interact, rest)
-	core/                    # World model and simulation loop
-	decision/                # Decision logic / action selection
-	goal/                    # Goal definitions and scoring
-	model/                   # Domain models (location, resource, memory event)
-	npc/                     # NPC state, memory, and goal system
 ```
-
-## Architecture
-
-### High-level Components
-
-- Simulator boots the world, seeds resources/NPCs, and starts the loop.
-- WorldLoop advances the simulation on a fixed tick schedule.
-- World updates resources and NPCs each tick.
-- Each NPC runs perceive -> evaluate goals -> decide action -> act.
-- Actions mutate world/NPC state and emit behavior logs.
-
-### Tick Flow Diagram
-
-```mermaid
-flowchart TD
-	A[Simulator.main] --> B[Create World]
-	B --> C[Seed Resources and NPCs]
-	C --> D[Start WorldLoop]
-	D --> E[World.tick]
-
-	E --> F[Regenerate Resources]
-	F --> G[For each NPC: update]
-
-	G --> H[Perceive Environment]
-	H --> I[Score Goals<br/>Survival Explore Social]
-	I --> J[DecisionEngine selects Action]
-	J --> K[Execute Action<br/>Move Gather Rest Interact]
-	K --> L[Update Memory and State]
-
-	L --> M[Remove Dead NPCs]
-	M --> N{Max ticks reached?}
-	N -- No --> E
-	N -- Yes --> O[Stop loop and print final world state]
-```
-
-## Useful Commands
-
-```bash
-# Compile only
-mvn compile
-
-# Build package (skip tests)
-mvn -DskipTests package
-
-# Run simulation
-mvn exec:java
-
-# Clean build output
-mvn clean
+EcoSim/
+├── src/main/java/com/aiworld/
+│   ├── Simulator.java          # entry point, world setup
+│   ├── core/                   # World, WorldLoop (tick scheduling + ring buffer)
+│   ├── action/                 # Move, Gather, Rest, Interact, Dialog, Attack, Steal
+│   ├── decision/               # DecisionEngine (utility-based action selection)
+│   ├── goal/                   # Survival, Explore, Social, Aggression goals
+│   ├── llm/                    # ClaudeClient, RecordingLLMClient, PlaybackLLMClient,
+│   │                           #   StrategyManager, StrategyValidator, prompt builders
+│   ├── dialog/                 # DialogSession, DialogPromptBuilder
+│   ├── model/                  # Location, Resource, MemoryEvent, NPCImpression
+│   ├── npc/                    # AbstractNPC, NPC, NPCState, GoalSystem, Memory
+│   └── server/                 # WorldServer, StateSerializer
+├── frontend/
+│   └── src/
+│       ├── App.jsx             # main orchestrator, history buffer, cache
+│       └── components/
+│           ├── ControlBar.jsx
+│           ├── WorldGrid.jsx
+│           ├── NPCPanel.jsx
+│           ├── SetupScreen.jsx
+│           └── TickScrubber.jsx
+├── mock-data/                  # recorded LLM responses (gitignored)
+├── .env                        # secrets and config (gitignored)
+└── start.sh                    # launcher
 ```
 
 ## Troubleshooting
 
-- `mvn: command not found`: install Maven and ensure it is on your PATH.
-- Java version errors: ensure Java 17 is active.
-- If the simulation appears to stop quickly, check `MAX_TICKS` in `Simulator.java`.
-
-## Notes
-
-- Current default run settings are tuned for readable console output.
-- Logs are intentionally verbose so behavior over time is easy to inspect.
+| Problem | Fix |
+|---------|-----|
+| `mvn: command not found` | Install Maven, add to PATH |
+| Java version errors | Ensure JDK 17 is active (`java -version`) |
+| `ANTHROPIC_API_KEY not set` | Set it in `.env` or use `./start.sh` (playback needs no key) |
+| Frontend shows "Cannot reach server" | Backend isn't running — check terminal for Java errors |
+| Playback shows mock fallback responses | No `mock-data/` files yet — run `./start.sh 1` once to record |
+| Simulation stops immediately | Check `ECOSIM_MAX_TICKS` in `.env` (0 = infinite) |
