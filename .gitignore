@@ -30,4 +30,5 @@ target/
 /frontend/node_modules/
 .remember/
 .superpowers/
+.vscode/
 mock-data/
