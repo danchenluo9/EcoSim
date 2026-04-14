@@ -46,6 +46,7 @@ export default function App() {
   const prevStateRef   = useRef(null)   // for reset detection (set by useEffect)
   const prevDataRef    = useRef(null)   // for dialog/conflict diffing
   const lastSavedTick  = useRef(-Infinity)
+  const pollIntervalRef = useRef(null)
 
   // ── Tick history ──────────────────────────────────────────────
   const historyRef       = useRef(new Map())  // tick → raw state snapshot
@@ -229,6 +230,12 @@ export default function App() {
         setTimeout(saveToStorage, 0)
       }
 
+      // Stop polling once the simulation finishes (running=false, tick>0 rules out setup state)
+      if (!data.running && data.tick > 0) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+
       prevDataRef.current = data
     } catch (e) {
       setState(null)
@@ -240,8 +247,8 @@ export default function App() {
 
   useEffect(() => {
     fetchState()
-    const id = setInterval(fetchState, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    pollIntervalRef.current = setInterval(fetchState, POLL_INTERVAL_MS)
+    return () => clearInterval(pollIntervalRef.current)
   }, [fetchState])
 
   // Clear history on simulation reset (new run started)
