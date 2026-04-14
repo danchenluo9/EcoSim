@@ -5,14 +5,50 @@ import ControlBar from './components/ControlBar.jsx'
 import SetupScreen from './components/SetupScreen.jsx'
 
 const POLL_INTERVAL_MS = 500
+const MAX_HISTORY      = 300   // max tick snapshots kept in memory
 
+// ── Dialog strip ──────────────────────────────────────────────────
+function DialogStrip({ dialogs, displayNames }) {
+  if (!dialogs || dialogs.length === 0) return null
+  const name  = id => displayNames?.[id] ?? id
+  const vColor = v  => v > 0.2 ? '#4ade80' : v < -0.2 ? '#f87171' : '#94a3b8'
+  return (
+    <div className="dialog-strip">
+      <span className="dialog-strip-title">Dialogs</span>
+      <div className="dialog-strip-list">
+        {dialogs.map((c, i) => (
+          <div key={i} className="dialog-card">
+            <div className="dialog-card-header">
+              <span className="dialog-card-pair">{name(c.speakerId)} → {name(c.listenerId)}</span>
+              <span className="dialog-card-valence" style={{ color: vColor(c.valence) }}>
+                {c.valence > 0 ? '+' : ''}{c.valence}
+              </span>
+            </div>
+            <div className="dialog-card-line"><b>{name(c.speakerId)}:</b> "{c.speakerLine}"</div>
+            <div className="dialog-card-line"><b>{name(c.listenerId)}:</b> "{c.listenerLine}"</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── App ───────────────────────────────────────────────────────────
 export default function App() {
-  const [state, setState] = useState(null)
+  const [state, setState]           = useState(null)
   const [selectedNPC, setSelectedNPC] = useState(null)
-  const [error, setError] = useState(null)
-  const fetchingRef = useRef(false)
-  const prevStateRef = useRef(null)
+  const [error, setError]           = useState(null)
+  const fetchingRef  = useRef(false)
+  const prevStateRef = useRef(null)   // for reset detection (set by useEffect)
+  const prevDataRef  = useRef(null)   // for dialog diffing (set inside fetchState)
 
+  // ── Tick history ──────────────────────────────────────────────
+  const historyRef     = useRef(new Map())  // tick → raw state snapshot
+  const tickDialogsRef = useRef(new Map())  // tick → dialog[]
+  const [historyTicks, setHistoryTicks] = useState([])  // sorted tick numbers
+  const [viewedTick, setViewedTick]     = useState(null) // null = live mode
+
+  // ── Display names / photos ────────────────────────────────────
   const [displayNames, setDisplayNames] = useState(() => {
     try { return JSON.parse(localStorage.getItem('npc-display-names') ?? '{}') }
     catch { return {} }
@@ -54,13 +90,15 @@ export default function App() {
     }
   }
 
+  // ── Polling ───────────────────────────────────────────────────
   const fetchState = useCallback(async () => {
-    if (fetchingRef.current) return   // drop poll if previous one is still in flight
+    if (fetchingRef.current) return
     fetchingRef.current = true
     try {
       const res = await fetch('/api/state')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
+
       // Detect health drops to flash attacked NPCs
       setState(prev => {
         if (!prev) return data
@@ -74,6 +112,45 @@ export default function App() {
       setSelectedNPC(prev =>
         prev ? data.npcs.find(n => n.id === prev.id) ?? null : null
       )
+
+      // ── Store snapshot in history ─────────────────────────────
+      const map = historyRef.current
+      map.set(data.tick, data)
+      if (map.size > MAX_HISTORY) {
+        map.delete(Math.min(...map.keys()))
+      }
+      setHistoryTicks(prev => {
+        const ticks = Array.from(map.keys()).sort((a, b) => a - b)
+        // Skip re-render if nothing changed
+        if (ticks.length === prev.length && ticks.at(-1) === prev.at(-1)) return prev
+        return ticks
+      })
+
+      // ── Detect newly arrived dialogs via diffing ──────────────
+      // Build a key set from the previous raw poll
+      const prevConvKeys = new Set()
+      for (const npc of prevDataRef.current?.npcs ?? []) {
+        for (const c of npc.conversations ?? []) {
+          prevConvKeys.add(convKey(c))
+        }
+      }
+      // Any conversation not in the previous poll is "new"
+      const newByTick = new Map() // tick → Map<key, conv>
+      for (const npc of data.npcs) {
+        for (const c of npc.conversations ?? []) {
+          const k = convKey(c)
+          if (!prevConvKeys.has(k)) {
+            if (!newByTick.has(c.tick)) newByTick.set(c.tick, new Map())
+            newByTick.get(c.tick).set(k, c)
+          }
+        }
+      }
+      for (const [tick, byKey] of newByTick) {
+        const existing = tickDialogsRef.current.get(tick) ?? []
+        tickDialogsRef.current.set(tick, [...existing, ...byKey.values()])
+      }
+
+      prevDataRef.current = data
     } catch (e) {
       setState(null)
       setError('Cannot reach simulation server. Is it running?')
@@ -88,16 +165,23 @@ export default function App() {
     return () => clearInterval(id)
   }, [fetchState])
 
+  // Clear history on simulation reset (new run started)
   useEffect(() => {
     if (prevStateRef.current === null && state && state.tick === 0 && !state.running) {
       setPhotos({})
       setDisplayNames({})
       localStorage.removeItem('npc-photos')
       localStorage.removeItem('npc-display-names')
+      historyRef.current.clear()
+      tickDialogsRef.current.clear()
+      prevDataRef.current = null
+      setHistoryTicks([])
+      setViewedTick(null)
     }
     prevStateRef.current = state
   }, [state])
 
+  // ── Control actions ───────────────────────────────────────────
   const sendControl = async (action) => {
     try {
       const res = await fetch('/api/control', { method: 'POST', body: action })
@@ -133,7 +217,31 @@ export default function App() {
     fetchState()
   }
 
+  // ── Scrubber state ────────────────────────────────────────────
+  const isLive = viewedTick === null
+  const sliderMax = Math.max(0, historyTicks.length - 1)
+  const sliderVal = isLive
+    ? sliderMax
+    : Math.max(0, historyTicks.indexOf(viewedTick))
+
+  const handleSlider = (e) => {
+    const idx = +e.target.value
+    // Rightmost position = back to live
+    setViewedTick(idx === historyTicks.length - 1 ? null : historyTicks[idx])
+  }
+
+  // ── Derived display data ──────────────────────────────────────
+  const displayedState   = isLive ? state : (historyRef.current.get(viewedTick) ?? state)
+  const displayedTick    = displayedState?.tick ?? null
+  const displayedDialogs = displayedTick !== null ? (tickDialogsRef.current.get(displayedTick) ?? []) : []
+
+  // When scrubbing, show the selected NPC's data from the historical snapshot
+  const displayedNPC = selectedNPC
+    ? (displayedState?.npcs.find(n => n.id === selectedNPC.id) ?? selectedNPC)
+    : null
+
   const isSetup = state && !state.running && state.tick === 0
+  const showScrubber = state && !isSetup && historyTicks.length > 1
 
   return (
     <div className="app">
@@ -142,6 +250,7 @@ export default function App() {
         {state && !isSetup && (
           <ControlBar
             tick={state.tick}
+            viewedTick={viewedTick}
             running={state.running}
             paused={state.paused}
             onPause={() => sendControl('pause')}
@@ -150,6 +259,27 @@ export default function App() {
           />
         )}
       </header>
+
+      {showScrubber && (
+        <div className="scrubber-bar">
+          {!isLive && <span className="viewing-badge">t{viewedTick}</span>}
+          <span className="scrubber-end">t{historyTicks[0]}</span>
+          <input
+            type="range"
+            className="tick-slider"
+            min={0}
+            max={sliderMax}
+            value={sliderVal}
+            onChange={handleSlider}
+          />
+          <span className="scrubber-end">t{historyTicks.at(-1)}</span>
+          {!isLive && (
+            <button className="btn btn-live" onClick={() => setViewedTick(null)}>
+              ⏵ Live
+            </button>
+          )}
+        </div>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
@@ -168,28 +298,37 @@ export default function App() {
       )}
 
       {state && !isSetup && (
-        <div className="app-body">
-          <WorldGrid
-            width={state.width}
-            height={state.height}
-            npcs={state.npcs}
-            resources={state.resources}
-            selectedId={selectedNPC?.id}
-            onSelectNPC={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
-            displayNames={displayNames}
-            photos={photos}
-          />
-          <NPCPanel
-            npcs={state.npcs}
-            selected={selectedNPC}
-            onSelect={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
-            displayNames={displayNames}
-            photos={photos}
-            onUpdateName={updateDisplayName}
-            onUpdatePhoto={updatePhoto}
-          />
-        </div>
+        <>
+          <div className="app-body">
+            <WorldGrid
+              width={displayedState?.width   ?? state.width}
+              height={displayedState?.height  ?? state.height}
+              npcs={displayedState?.npcs      ?? state.npcs}
+              resources={displayedState?.resources ?? state.resources}
+              selectedId={selectedNPC?.id}
+              onSelectNPC={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
+              displayNames={displayNames}
+              photos={photos}
+            />
+            <NPCPanel
+              npcs={displayedState?.npcs ?? state.npcs}
+              selected={displayedNPC}
+              onSelect={id => setSelectedNPC(state.npcs.find(n => n.id === id) ?? null)}
+              displayNames={displayNames}
+              photos={photos}
+              onUpdateName={updateDisplayName}
+              onUpdatePhoto={updatePhoto}
+            />
+          </div>
+          <DialogStrip dialogs={displayedDialogs} displayNames={displayNames} />
+        </>
       )}
     </div>
   )
+}
+
+// Stable dedup key for a conversation: sort speaker/listener so A→B and B→A
+// (which would appear in both NPCs' lists) collapse to the same key.
+function convKey(c) {
+  return [...[c.speakerId, c.listenerId]].sort().join('↔') + '@' + c.tick
 }

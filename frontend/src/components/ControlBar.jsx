@@ -1,7 +1,10 @@
-export default function ControlBar({ tick, running, paused, onPause, onResume, onStop }) {
+export default function ControlBar({ tick, viewedTick, running, paused, onPause, onResume, onStop }) {
+  const isLive = viewedTick === null
   return (
     <div className="control-bar">
-      <span className="tick-counter">Tick {tick}</span>
+      <span className="tick-counter">
+        {isLive ? `Tick ${tick}` : `Tick ${viewedTick} / ${tick}`}
+      </span>
       <span className={`sim-status ${paused ? 'paused' : running ? 'running' : 'stopped'}`}>
         {paused ? 'Paused' : running ? 'Running' : 'Stopped'}
       </span>
