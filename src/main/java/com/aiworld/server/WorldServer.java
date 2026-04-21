@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * Embedded HTTP server exposing the simulation state as a REST API.
@@ -39,11 +40,14 @@ public class WorldServer {
     private static final Set<String> VALID_ARCHETYPES =
         Set.of("default", "forager", "diplomat", "explorer", "fighter");
 
-    private final WorldLoop loop;
-    private HttpServer      server;
+    // volatile: written on reset (server thread), read by HTTP handler threads
+    private volatile WorldLoop          loop;
+    private final    Supplier<WorldLoop> worldFactory;
+    private HttpServer                   server;
 
-    public WorldServer(WorldLoop loop) {
-        this.loop = loop;
+    public WorldServer(WorldLoop loop, Supplier<WorldLoop> worldFactory) {
+        this.loop         = loop;
+        this.worldFactory = worldFactory;
     }
 
     public void start() throws IOException {
@@ -173,6 +177,14 @@ public class WorldServer {
             case "stop":
                 loop.stop();
                 send(exchange, 200, "{\"status\":\"stopped\"}", "application/json");
+                break;
+            case "reset":
+                WorldLoop oldLoop = this.loop;
+                WorldLoop newLoop = worldFactory.get();
+                this.loop = newLoop;  // atomic volatile write — new polls see fresh world immediately
+                new Thread(oldLoop::stop, "reset-cleanup").start();  // stop old loop in background
+                log.info("Simulation reset — fresh world ready, waiting for UI start");
+                send(exchange, 200, "{\"status\":\"reset\"}", "application/json");
                 break;
             default:
                 send(exchange, 400, "{\"error\":\"unknown action: " + esc(body) + "\"}", "application/json");
