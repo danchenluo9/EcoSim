@@ -359,7 +359,7 @@ export default function App() {
 
   // ── Restart ───────────────────────────────────────────────────
   const handleRestart = async () => {
-    try { await fetch('/api/control', { method: 'POST', body: 'stop' }) } catch {}
+    try { await fetch('/api/control', { method: 'POST', body: 'reset' }) } catch {}
     localStorage.removeItem(CACHE_KEY)
     window.location.reload()
   }

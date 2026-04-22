@@ -9,7 +9,8 @@ A 2D grid-based NPC simulation where autonomous agents pursue survival, explorat
 - **Utility-based AI** — NPCs score competing goals (Survival, Exploration, Social, Aggression) and pick the highest-utility action each tick
 - **LLM strategy layer** — Claude generates strategic directives that bias the utility engine for 30–60 ticks at a time
 - **LLM dialogue** — NPCs generate in-character conversations when they meet; dialogue affects trust scores and memory
-- **Personality archetypes** — Forager, Diplomat, Explorer, Fighter each weight goals differently
+- **Personality archetypes** — Default, Forager, Diplomat, Explorer, Fighter each weight goals differently
+- **NPC customisation** — rename any NPC and upload a profile photo from the setup screen
 - **Memory system** — NPCs remember attacks, alliances, robberies, and conversations; impressions decay over time
 - **React web UI** — live 2D grid, NPC panel with stats/memory/conversations, tick history scrubber
 - **LLM mock system** — record real API responses once, replay offline indefinitely (no API cost during debugging)
@@ -110,7 +111,12 @@ Responses cycle round-robin, so a playback run can last longer than the recordin
 Open **http://localhost:5173** after starting.
 
 ### Setup screen
-Configure each NPC's personality archetype before the simulation starts. Click **Start** when ready.
+Configure each NPC before the simulation starts:
+- Choose a **personality archetype** (Default, Forager, Diplomat, Explorer, Fighter)
+- Set a **display name** (double-click the name field)
+- Upload a **profile photo** (click the avatar)
+
+Click **Start** when ready.
 
 ### Simulation view
 
@@ -125,7 +131,7 @@ Configure each NPC's personality archetype before the simulation starts. Click *
 
 The frontend caches the last 60 tick snapshots in `localStorage` so history survives a page refresh.
 
-Clicking **↺ New Sim** clears the cache and reloads. Restart the backend to start a fresh simulation.
+Clicking **↺ New Sim** sends a `reset` command to the backend (which rebuilds the world to tick=0 in-process), clears the frontend cache, and reloads the page — the setup screen appears immediately, no backend restart needed.
 
 ## Architecture Overview
 
@@ -136,7 +142,7 @@ Browser (React)
 WorldServer (Java HttpServer :8081)
     ├── GET  /api/history?since=N  → buffered tick snapshots since tick N
     ├── GET  /api/state            → current world snapshot
-    ├── POST /api/control          → pause / resume / stop
+    ├── POST /api/control          → pause / resume / stop / reset
     └── POST /api/npc             → set NPC archetype (setup only)
     │
 WorldLoop (300ms tick scheduler)
@@ -201,3 +207,4 @@ EcoSim/
 | Frontend shows "Cannot reach server" | Backend isn't running — check terminal for Java errors |
 | Playback shows mock fallback responses | No `mock-data/` files yet — run `./start.sh 1` once to record |
 | Simulation stops immediately | Check `ECOSIM_MAX_TICKS` in `.env` (0 = infinite) |
+| "↺ New Sim" shows simulation instead of setup | Backend may not have received the reset — check the terminal for errors and try again |

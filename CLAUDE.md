@@ -72,8 +72,10 @@ Built-in Java `HttpServer`, no framework:
 |----------|-------------|
 | `GET /api/history?since=N` | All buffered tick snapshots with tick > N, plus current state. Primary polling endpoint. |
 | `GET /api/state` | Current world snapshot only (legacy, still available) |
-| `POST /api/control` | Body: `start` \| `pause` \| `resume` \| `stop` |
+| `POST /api/control` | Body: `start` \| `pause` \| `resume` \| `stop` \| `reset` |
 | `POST /api/npc` | Body: `{"id":"Alice","archetype":"Fighter"}` — setup phase only |
+
+`reset` atomically rebuilds the world (via `Simulator.buildWorldLoop()`) and swaps it into `WorldServer` — the Java process keeps running and the frontend sees `tick=0` on the next poll.
 
 `/api/history` response shape:
 ```json
@@ -91,11 +93,14 @@ React 18 + Vite. Polls `/api/history?since=<lastReceivedTick>` every 500ms, proc
 - `viewedTick` — `null` = live mode; number = historical tick shown on scrubber
 - `lastReceivedTick` — cursor sent as `?since=` on each poll
 
-**Components:**
+**Component files** (`frontend/src/components/`):
+- `SetupScreen` — NPC archetype selection, display-name editing, photo upload; shown before simulation starts
 - `ControlBar` — tick counter (shows `Tick 30 / 100` in history mode), pause/resume/stop, ↺ New Sim
 - `TickScrubber` — custom drag slider; ▲ purple marks = dialog ticks, ▼ red marks = conflict ticks; clicking a mark navigates to that tick
 - `WorldGrid` — SVG 2D renderer; receives `displayedState` (historical or live)
 - `NPCPanel` — stats, strategy, action log, conversations, impressions, events; also receives `displayedState`
+
+**Inline components in `App.jsx`:**
 - `DialogStrip` — conversations at the viewed tick, shown as cards at the bottom
 - `ConflictStrip` — attack/theft events at the viewed tick, shown as compact chips
 
@@ -107,6 +112,7 @@ Personality presets that apply goal multipliers:
 
 | Archetype | Dominant goal |
 |-----------|--------------|
+| Default | Balanced (no dominant goal) |
 | Forager | Survival (food) |
 | Diplomat | Social |
 | Explorer | Exploration |
@@ -118,7 +124,7 @@ Configured in the SetupScreen UI or via `POST /api/npc` before simulation start.
 
 | What | Where |
 |------|-------|
-| Entry point | `src/main/java/com/aiworld/Simulator.java` |
+| Entry point + world factory | `src/main/java/com/aiworld/Simulator.java` — `buildWorldLoop()` is called on startup and on each `reset` |
 | Tick loop + ring buffer | `src/main/java/com/aiworld/core/WorldLoop.java` |
 | World state + tick logic | `src/main/java/com/aiworld/core/World.java` |
 | NPC base class | `src/main/java/com/aiworld/npc/AbstractNPC.java` |
