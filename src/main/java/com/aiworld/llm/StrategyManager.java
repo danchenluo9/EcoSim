@@ -42,7 +42,7 @@ public class StrategyManager {
     private static final double FOOD_DANGER           = 0.15;
 
     private final LLMClient      llmClient;
-    private final Random         random     = new Random();
+    private final Random         random;
 
     /** Daemon thread — one per NPC, so LLM calls never block the tick thread. */
     private final ExecutorService llmExecutor;
@@ -52,6 +52,9 @@ public class StrategyManager {
     private volatile Strategy currentStrategy;
     private Future<Strategy> pendingCall          = null;
     private boolean          pendingCallIsEmergency = false;
+    // Tick at which the in-flight call's prompt was built. Events after this tick were
+    // not seen by the LLM, so they must still count as "new" once the result is applied.
+    private long             pendingCallTick        = Long.MIN_VALUE;
 
     private int  ticksUntilNextCall        = BASE_COOLDOWN;
     private long lastCallTick              = Long.MIN_VALUE; // MIN_VALUE = "before any tick"
@@ -63,14 +66,20 @@ public class StrategyManager {
     private long lastConflictEventTick     = Long.MIN_VALUE;
 
     public StrategyManager(LLMClient llmClient, String npcId) {
-        this.llmClient          = llmClient;
-        this.currentStrategy    = Strategy.defaultStrategy(0);  // eager init avoids getter side-effect
-        this.ticksUntilNextCall = BASE_COOLDOWN + random.nextInt(COOLDOWN_JITTER);
-        this.llmExecutor        = Executors.newSingleThreadExecutor(r -> {
+        this(llmClient, new Random(), Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "llm-worker-" + npcId);
             t.setDaemon(true);
             return t;
-        });
+        }));
+    }
+
+    /** Package-private: lets tests control cooldown jitter and run LLM calls synchronously. */
+    StrategyManager(LLMClient llmClient, Random random, ExecutorService llmExecutor) {
+        this.llmClient          = llmClient;
+        this.random             = random;
+        this.currentStrategy    = Strategy.defaultStrategy(0);  // eager init avoids getter side-effect
+        this.ticksUntilNextCall = BASE_COOLDOWN + random.nextInt(COOLDOWN_JITTER);
+        this.llmExecutor        = llmExecutor;
     }
 
     // ── Per-tick entry point ──────────────────────────────────────────
@@ -119,7 +128,9 @@ public class StrategyManager {
             }
             pendingCall          = null;
             pendingCallIsEmergency = false;
-            lastCallTick         = now;
+            // Use the prompt-build tick, not `now`: conflicts that happened while the call
+            // was in flight were not in the prompt and must still be able to trigger.
+            lastCallTick         = pendingCallTick;
             // [Issue 1] Reset the regular cooldown every time a call completes, regardless
             // of whether it was a routine or emergency call. Without this, a long-running
             // emergency call that spans the point where ticksUntilNextCall hits 0 will make
@@ -185,6 +196,7 @@ public class StrategyManager {
         }
 
         pendingCallIsEmergency = starvationRisk || conflictDetected;
+        pendingCallTick        = callTick;
         pendingCall = llmExecutor.submit(() -> llmClient.call(prompt, callTick));
     }
 

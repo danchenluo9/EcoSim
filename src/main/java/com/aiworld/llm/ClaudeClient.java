@@ -8,6 +8,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.function.LongSupplier;
 
 /**
  * LLM client that calls the Anthropic Claude API.
@@ -34,9 +35,12 @@ public class ClaudeClient implements LLMClient {
     private static final long   CIRCUIT_BREAKER_MS       = 60_000; // 60 seconds
     private static final String SYSTEM_PROMPT            = "Respond with raw JSON only. No markdown, no prose, no explanation.";
 
-    private final String     apiKey;
-    private final String     model;
-    private final HttpClient http;
+    private final String       apiKey;
+    private final String       model;
+    private final String       apiUrl;
+    private final HttpClient   http;
+    /** Time source for the circuit breaker; injectable so tests can advance time without sleeping. */
+    private final LongSupplier clock;
 
     // [LLM-1] consecutiveFailures is a plain int guarded by synchronized recordFailure/recordSuccess.
     // The previous AtomicInteger + non-atomic compound (increment → check → write circuitOpenUntilMs
@@ -53,11 +57,18 @@ public class ClaudeClient implements LLMClient {
     }
 
     public ClaudeClient(String apiKey, String model) {
+        this(apiKey, model, API_URL,
+             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build(),
+             System::currentTimeMillis);
+    }
+
+    /** Package-private: lets tests point at a local stub server and control the clock. */
+    ClaudeClient(String apiKey, String model, String apiUrl, HttpClient http, LongSupplier clock) {
         this.apiKey = apiKey;
         this.model  = model;
-        this.http   = HttpClient.newBuilder()
-                                .connectTimeout(Duration.ofSeconds(10))
-                                .build();
+        this.apiUrl = apiUrl;
+        this.http   = http;
+        this.clock  = clock;
     }
 
     /**
@@ -78,7 +89,7 @@ public class ClaudeClient implements LLMClient {
         if (isCircuitOpen()) return null;
         try {
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(API_URL))
+                .uri(URI.create(apiUrl))
                 .header("Content-Type", "application/json")
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", "2023-06-01")
@@ -127,7 +138,7 @@ public class ClaudeClient implements LLMClient {
         if (isCircuitOpen()) return null;
         try {
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(API_URL))
+                .uri(URI.create(apiUrl))
                 .header("Content-Type", "application/json")
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", "2023-06-01")
@@ -161,7 +172,7 @@ public class ClaudeClient implements LLMClient {
     // ── Circuit breaker ───────────────────────────────────────────────
 
     private boolean isCircuitOpen() {
-        if (System.currentTimeMillis() < circuitOpenUntilMs) {
+        if (clock.getAsLong() < circuitOpenUntilMs) {
             log.warn("Circuit open — skipping LLM call (API recovering)");
             return true;
         }
@@ -176,7 +187,7 @@ public class ClaudeClient implements LLMClient {
     private synchronized void recordFailure() {
         consecutiveFailures++;
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            circuitOpenUntilMs = System.currentTimeMillis() + CIRCUIT_BREAKER_MS;
+            circuitOpenUntilMs = clock.getAsLong() + CIRCUIT_BREAKER_MS;
             log.warn("{} consecutive failures — circuit open for {}s",
                 consecutiveFailures, CIRCUIT_BREAKER_MS / 1000);
             consecutiveFailures = 0;
