@@ -53,17 +53,13 @@ public class Simulator {
         return live;
     }
 
-    public static void main(String[] args) throws Exception {
-
-        log.info("╔══════════════════════════════════╗");
-        log.info("║   AI NPC Virtual World System    ║");
-        log.info("╚══════════════════════════════════╝");
-
-        // ── 1. Create world ──────────────────────────────────────────
+    /**
+     * Builds a fresh World with resources and NPCs and wraps it in a WorldLoop.
+     * Called once on startup and again on each UI-initiated reset.
+     */
+    static WorldLoop buildWorldLoop() {
         World world = new World(WORLD_WIDTH, WORLD_HEIGHT);
 
-        // ── 2. Place resources ───────────────────────────────────────
-        // Three food clusters — creates distinct territorial zones
         world.addResource(new Resource(Resource.Type.FOOD,
             new Location(3,  3),  50, 100, 2));
         world.addResource(new Resource(Resource.Type.FOOD,
@@ -73,9 +69,6 @@ public class Simulator {
         world.addResource(new Resource(Resource.Type.MEDICINE,
             new Location(10, 10), 30,  50, 1));
 
-        // ── 3. Spawn NPCs ────────────────────────────────────────────
-        // Each NPC gets its own LLM client so circuit-breaker faults are isolated
-        // per-NPC rather than blocking all LLM calls when one NPC's prompt fails.
         NPC alice = new NPC("Alice", new Location(2,  2));  alice.setLLMClient(createLLMClient("Alice"));
         NPC bob   = new NPC("Bob",   new Location(14, 4));  bob.setLLMClient(createLLMClient("Bob"));
         NPC carol = new NPC("Carol", new Location(9,  14)); carol.setLLMClient(createLLMClient("Carol"));
@@ -88,11 +81,19 @@ public class Simulator {
         world.addNPC(dave);
         world.addNPC(eve);
 
-        // ── 4. Create the simulation loop (not started yet) ──────────
-        WorldLoop loop = new WorldLoop(world, TICK_INTERVAL_MS, MAX_TICKS);
+        return new WorldLoop(world, TICK_INTERVAL_MS, MAX_TICKS);
+    }
 
-        // ── 5. Start the HTTP server ──────────────────────────────────
-        WorldServer server = new WorldServer(loop);
+    public static void main(String[] args) throws Exception {
+
+        log.info("╔══════════════════════════════════╗");
+        log.info("║   AI NPC Virtual World System    ║");
+        log.info("╚══════════════════════════════════╝");
+
+        WorldLoop loop = buildWorldLoop();
+
+        // ── Start the HTTP server ─────────────────────────────────────
+        WorldServer server = new WorldServer(loop, Simulator::buildWorldLoop);
         try {
             server.start();
         } catch (Exception e) {
@@ -129,8 +130,8 @@ public class Simulator {
 
         // ── 7. Print final world state ───────────────────────────────
         log.info("══ Final World State ══");
-        world.getNpcs().forEach(npc -> log.info("  {}", npc));
-        world.getDeadNpcs().forEach(npc -> log.info("  {} [DEAD]", npc));
+        loop.getWorld().getNpcs().forEach(npc -> log.info("  {}", npc));
+        loop.getWorld().getDeadNpcs().forEach(npc -> log.info("  {} [DEAD]", npc));
         log.info("Simulation complete. Server still running — press Ctrl+C to exit.");
     }
 }
